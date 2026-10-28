@@ -32,27 +32,39 @@ Command: `uv run python s1_tool_calling.py --repeats 2`
 4. **Always set `max_tokens`.** Without it, OpenRouter reserves credit for the model's full output length and returns 402 on a low balance.
 5. Cost per request comes back in `usage.cost` on every response, with no flag needed (OpenRouter docs, checked 2026-10-28). The ledger uses that real number, not an estimate.
 
-## 2. Retrieval over the real corpus (`s2_retrieval.py`): BM25 VERIFIED, dense UNVERIFIED
+## 2. Retrieval over the real corpus (`s2_retrieval.py`) VERIFIED
 
 **Corpus:** the full spike corpus, **49,871 chunks from 2,549 documents** (4 FAA handbooks plus 2,545 ADs), about 10.6M words. Chunks are 220 words with a 40-word overlap, and each AD chunk is prefixed with the AD title so make and model survive chunking. Parsing takes 8–17 s and the BM25 index builds in 2 s.
 
 **Questions:** 18 hand-written questions (`spikes/retrieval_questions.json`): 11 against specific handbook or AC pages, which I read to set the expected page, and 7 against specific 2026 ADs. A hit means a top-5 chunk comes from the right document and, for PDFs, from an expected page.
 
-Command: `uv run python s2_retrieval.py --bm25-only --k 5`
+Command: `uv run python s2_retrieval.py --k 5` (full run 2026-10-29, 8 min 51 s, mostly embedding)
 
 | Method | recall@5 | MRR@5 |
 | --- | --- | --- |
 | BM25 | **0.89** (16/18) | **0.75** |
-| Dense (`voyageai/voyage-4-lite`) | not run, see below | |
-| Hybrid (RRF of BM25 + dense) | not run | |
+| Dense (`voyageai/voyage-4-lite`) | 0.78 (14/18) | 0.61 |
+| Hybrid (RRF of BM25 + dense, k=60) | **0.89** (16/18) | **0.75** |
 
-**The two BM25 misses are both vocabulary gaps.** "Which NDI method uses a *glowing dye under black light*…" doesn't contain "fluorescent penetrant". "What does a *magnetic plug* in the oil return line tell the mechanic?" doesn't contain "chip detector". This is where dense retrieval should help, so it's the main thing the dense run has to show.
+**My expectation that dense retrieval would fix the paraphrase misses only partly held:**
+- "Which NDI method uses a *glowing dye under black light*…" (the page says "fluorescent penetrant"): **missed by all three methods.**
+- "What does a *magnetic plug* in the oil return line tell the mechanic?" (the page says "chip detector"): dense found it **at rank 5**, but hybrid lost it again because BM25 ranked it outside its top 50.
+- Dense missed 3 questions that BM25 got at rank 1 or 2 (lockwire, turbine hot start, the ATR42 limitation). Exact technical terms ("safety wire", "EGT", model numbers) carry most of the signal in this corpus.
+- Hybrid improved ranking on some questions (eddy current 3→1, Dash 8 AD 4→1, human factors 2→1) and lost a place on others (787 couplings 1→2, where an older superseded AD `2023-11091` outranked the current one). The overall score tied BM25.
+
+**What this means for Phase 1 and 3:** keep hybrid search, because it never did worse than dense and it fixed several ranking errors. But the spike gives **no evidence yet that the cheap embedding model is worth it over BM25 alone.** Things to test in Phase 3, on a less keyword-biased golden set:
+1. A stronger embedding model (`voyage-4` or `voyage-4-large`, at 3–6x the price).
+2. A reranker on the top 50.
+3. A tuned RRF weighting.
+4. Query rewriting, so plain-language terms map to technical vocabulary (for example "glowing dye" to "fluorescent penetrant").
+
+AD **supersession** matters: older ADs on the same topic compete with current ones, so we need metadata that boosts the current AD and links superseded ones.
 
 Other observations:
 - AD questions work well by keyword (6/7 at rank 1 or 2), because ADs name specific makes, parts and failure modes. The Dash 8 question ranked at 4, behind an older related AD (`2025-18757`). That's correct behaviour, but answer generation will need recency and supersession awareness.
 - **Bias caveat:** I wrote the questions after reading the target pages, which favours keyword overlap and probably overstates BM25. The Phase 3 golden set needs questions written from technician scenarios, not from the pages.
 
-**Dense run stopped by account credit.** The first full run embedded batches until OpenRouter returned `402 Insufficient credits. This account never purchased credits` at a cumulative spend of **$0.213**. The account's starting credit ran out. My $1 cap wasn't reached, and the key's $10 limit doesn't add funds. The vectors embedded before the stop were lost, because the script only saved at the end. **Fixed:** `embed()` now saves each batch of 64 as it lands and resumes from those batches, so the rerun pays only for the rest. The full dense run is estimated at about $0.29 (14.3M tokens at $0.02/M).
+**The first dense run was stopped by account credit.** It embedded 400 batches until OpenRouter returned `402 Insufficient credits. This account never purchased credits` at a cumulative spend of $0.213. Those vectors were lost because the script only saved at the end. **Fixed:** `embed()` now saves each batch of 64 as it lands and resumes from those batches. After credits were added, the rerun embedded the full corpus for **$0.36**. My estimate of $0.29 came from words × 1.35, which undercounts tokens on this technical text by about 25%. Phase 4 cost estimates should use a real tokenizer count, not a word ratio.
 
 ## 3. Human-approval interrupt (`s3_interrupt.py`) VERIFIED
 
@@ -92,7 +104,11 @@ Pinning: Phase 3 pins the upstream provider with `provider.order` plus `allow_fa
 
 ## Spend
 
-**$0.2129 total** (ledger `spikes/.cache/spend.jsonl`, from `usage.cost`): **$0.0387** on 156 logged chat completions and **$0.1741** on 400 embedding batches (25,600 of 49,871 chunks, about half the corpus, before the 402). A few diagnostic probes run outside the scripts weren't logged. Their costs, as returned in `usage.cost`, total under $0.001. The $1.00 cap was never reached.
+**$0.5724 total** (ledger `spikes/.cache/spend.jsonl`, from `usage.cost`):
+- **$0.0387** on 156 logged chat completions.
+- **$0.5337** on 1,181 embedding batches. Of that, $0.174 was the first run, which stopped at the 402 and lost its vectors, and $0.36 was the complete rerun.
+
+About a third of the total was waste from the lost partial run. Resumable embedding is now built in. A few diagnostic probes run outside the scripts weren't logged. Their costs, as returned in `usage.cost`, total under $0.001. The $1.00 cap was never reached.
 
 ## Exit gate status
 
@@ -101,11 +117,10 @@ Pinning: Phase 3 pins the upstream provider with `provider.order` plus `allow_fa
 | `SCOPE.md` and `DATA.md` drafted | Done, **awaiting your approval** |
 | Spike: tool calling via OpenRouter | **Passed.** Two models at 16/16 |
 | Spike: approval interrupt | **Passed.** 7/7 |
-| Spike: retrieval returns the right passages | **Partly.** BM25 at 0.89 recall@5 on the full corpus; dense and hybrid not run yet (credits) |
+| Spike: retrieval returns the right passages | **Passed.** Hybrid and BM25 at 0.89 recall@5 over 49,871 chunks. Dense alone scored lower (0.78); see section 2 |
 | Model shortlist | Done (section 5) |
 
 ## Open items for the gate
 
-- **Add credits to OpenRouter** (a $5 top-up is plenty), then run `uv run python s2_retrieval.py --k 5` to finish the dense and hybrid comparison.
 - **Rotate the OpenRouter key.** It was pasted in chat and is still the active key.
 - Approve the domain switch and the two scope questions in `docs/SCOPE.md`.
