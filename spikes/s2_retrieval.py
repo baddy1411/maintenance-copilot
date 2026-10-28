@@ -56,14 +56,23 @@ def tok(s: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", s.lower())
 
 
-def embed(c, model: str, texts: list[str], kind: str) -> np.ndarray:
+def embed(c, model: str, texts: list[str], kind: str, resume_dir=None) -> np.ndarray:
+    """Embed in batches of 64. With resume_dir, each batch is saved as it lands, so a run that
+    stops (402 on credits, budget cap) resumes instead of paying for the same batches again."""
     out = []
     for i in range(0, len(texts), 64):
+        part = resume_dir / f"{i:07d}.npy" if resume_dir else None
+        if part and part.exists():
+            out.extend(np.load(part))
+            continue
         check_budget()
         t = time.perf_counter()
         r = c.embeddings.create(model=model, input=texts[i:i + 64], extra_body={"provider": PROVIDER_PREFS})
         record(kind, model, r.usage, time.perf_counter() - t)
-        out.extend(d.embedding for d in r.data)
+        batch = [d.embedding for d in r.data]
+        if part:
+            np.save(part, np.array(batch, dtype=np.float32))
+        out.extend(batch)
     v = np.array(out, dtype=np.float32)
     return v / np.linalg.norm(v, axis=1, keepdims=True)
 
@@ -81,6 +90,7 @@ def main():
     ap.add_argument("--embed-model", default="voyageai/voyage-4-lite")
     ap.add_argument("--k", type=int, default=5)
     ap.add_argument("--max-ads", type=int, default=None)
+    ap.add_argument("--bm25-only", action="store_true", help="No API calls: keyword retrieval only")
     args = ap.parse_args()
 
     questions = json.loads((ROOT / "retrieval_questions.json").read_text())
@@ -90,15 +100,17 @@ def main():
     words = sum(len(ch["text"].split()) for ch in chunks)
     print(f"{len(chunks):,} chunks from {n_docs:,} documents, ~{words:,} words, parsed in {time.perf_counter() - t0:.0f}s")
 
+    t0 = time.perf_counter()
     bm25 = BM25Okapi([tok(ch["text"]) for ch in chunks])
-    c = client()
-    cache = ROOT / ".cache" / f"emb-{args.embed_model.replace('/', '_')}-{len(chunks)}.npy"
-    if cache.exists():
-        E = np.load(cache)
+    print(f"BM25 index built in {time.perf_counter() - t0:.0f}s")
+    if args.bm25_only:
+        E = Q = None
     else:
-        E = embed(c, args.embed_model, [ch["text"] for ch in chunks], "embed-corpus")
-        np.save(cache, E)
-    Q = embed(c, args.embed_model, [q["question"] for q in questions], "embed-query")
+        c = client()
+        resume = ROOT / ".cache" / f"emb-{args.embed_model.replace('/', '_')}-{len(chunks)}"
+        resume.mkdir(parents=True, exist_ok=True)
+        E = embed(c, args.embed_model, [ch["text"] for ch in chunks], "embed-corpus", resume)
+        Q = embed(c, args.embed_model, [q["question"] for q in questions], "embed-query")
 
     def hit(q, ranking):
         """Rank (1-based) of the first chunk on an expected page of the expected doc, else None."""
@@ -108,16 +120,19 @@ def main():
                 return r
         return None
 
-    methods = {"bm25": [], "dense": [], "hybrid": []}
+    methods = {"bm25": []} if E is None else {"bm25": [], "dense": [], "hybrid": []}
     for qi, q in enumerate(questions):
         b = list(np.argsort(-bm25.get_scores(tok(q["question"])))[:50])
-        d = list(np.argsort(-(E @ Q[qi]))[:50])
-        h = rrf(b, d)
-        row = {m: hit(q, r) for m, r in (("bm25", b), ("dense", d), ("hybrid", h))}
+        if E is None:
+            d, h = [], b
+        else:
+            d = list(np.argsort(-(E @ Q[qi]))[:50])
+            h = rrf(b, d)
+        row = {m: hit(q, r) for m, r in (("bm25", b), ("dense", d), ("hybrid", h)) if m in methods}
         for m, v in row.items():
             methods[m].append(v)
         top = chunks[h[0]]
-        print(f"- {q["question"][:70]:70s} bm25={row['bm25']} dense={row['dense']} hybrid={row['hybrid']}  top={top['chunk_id']}")
+        print(f"- {q['question'][:70]:70s} {row}  top={top['chunk_id']}")
 
     print(f"\nrecall@{args.k} and MRR@{args.k} over {len(questions)} questions (page-level match):")
     for m, ranks in methods.items():

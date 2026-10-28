@@ -50,6 +50,47 @@ def record(kind: str, model: str, usage, latency_s: float) -> float:
     return cost
 
 
+def strict_schema(model_cls) -> dict:
+    """Pydantic JSON schema -> OpenAI 'strict' form: every object closed (additionalProperties: false)
+    and every property required (optional ones stay nullable). GPT-6 Luna rejects the default schema."""
+    schema = model_cls.model_json_schema()
+
+    def walk(node):
+        if isinstance(node, dict):
+            if node.get("type") == "object" and "properties" in node:
+                node["additionalProperties"] = False
+                node["required"] = list(node["properties"])
+            node.pop("default", None)
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(schema)
+    return schema
+
+
+_SUPPORTED: dict[str, set[str]] = {}
+
+
+def supported_params(model: str) -> set[str]:
+    """Parameters the model's endpoints accept (from /models). With require_parameters=True,
+    sending an unsupported one (e.g. temperature on claude-haiku-5.5) makes OpenRouter return 404."""
+    if not _SUPPORTED:
+        import urllib.request
+        with urllib.request.urlopen(f"{BASE_URL}/models", timeout=30) as r:
+            for m in json.load(r)["data"]:
+                _SUPPORTED[m["id"]] = set(m.get("supported_parameters") or [])
+    return _SUPPORTED.get(model, set())
+
+
+def optional(model: str, **params) -> dict:
+    """Keep only the optional sampling params this model supports."""
+    ok = supported_params(model)
+    return {k: v for k, v in params.items() if k in ok}
+
+
 def check_budget() -> None:
     """Hard cap: refuse to send another request once the ledger reaches the budget."""
     if (s := spent()) >= BUDGET_USD:

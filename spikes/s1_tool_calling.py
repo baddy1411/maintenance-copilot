@@ -14,7 +14,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
-from common import PROVIDER_PREFS, BudgetExceeded, check_budget, client, record
+from common import PROVIDER_PREFS, BudgetExceeded, check_budget, client, optional, record, strict_schema
 
 DEFAULT_MODELS = ["anthropic/claude-haiku-5.5", "openai/gpt-6-luna", "deepseek/deepseek-v4.1-flash"]
 
@@ -48,7 +48,7 @@ TOOLS = {
     "get_aircraft": (GetAircraftArgs, "Get one aircraft from OUR fleet (registrations MX-001..MX-030): type, engines, hours, cycles, last 5 work orders."),
 }
 TOOL_SPECS = [
-    {"type": "function", "function": {"name": n, "description": d, "parameters": m.model_json_schema()}}
+    {"type": "function", "function": {"name": n, "description": d, "parameters": strict_schema(m)}}
     for n, (m, d) in TOOLS.items()
 ]
 
@@ -108,7 +108,8 @@ def run_tool_case(c, model, prompt, expected, extra):
     r = c.chat.completions.create(
         model=model,
         messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
-        tools=TOOL_SPECS, tool_choice="auto", parallel_tool_calls=False, temperature=0,
+        tools=TOOL_SPECS, tool_choice="auto", max_tokens=600,
+        **optional(model, parallel_tool_calls=False, temperature=0),
         extra_body={"provider": PROVIDER_PREFS},
     )
     dt = time.perf_counter() - t
@@ -140,14 +141,15 @@ def run_tool_case(c, model, prompt, expected, extra):
 
 def run_structured(c, model):
     check_budget()
-    schema = Diagnosis.model_json_schema()
+    schema = strict_schema(Diagnosis)
     t = time.perf_counter()
     r = c.chat.completions.create(
         model=model,
         messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": DIAG_EVIDENCE}],
         response_format={"type": "json_schema", "json_schema": {"name": "Diagnosis", "strict": True, "schema": schema}},
-        temperature=0,
-        extra_body={"provider": PROVIDER_PREFS},
+        # Reasoning tokens count against max_tokens: DeepSeek truncated its JSON at 1500.
+        max_tokens=4000, **optional(model, temperature=0),
+        extra_body={"provider": PROVIDER_PREFS, **optional(model, reasoning={"effort": "low"})},
     )
     dt = time.perf_counter() - t
     record("structured", model, r.usage, dt)
