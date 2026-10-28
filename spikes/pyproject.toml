@@ -1,0 +1,14 @@
+[project]
+name = "spikes"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "fonttools>=4.68.0",
+    "langgraph>=1.2.18",
+    "numpy>=2.5.4",
+    "openai>=3.40.0",
+    "pydantic>=2.14.1",
+    "pypdfium2>=5.14.0",
+    "python-dotenv>=1.2.4",
+    "rank-bm25>=0.2.2",
+]

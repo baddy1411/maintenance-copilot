@@ -1,0 +1,20 @@
+[
+  {"question": "How many broken strands in a control cable mean it has to be replaced, and where does that apply?", "doc_id": "faa-ac-43-13-1b", "pages": [344, 345]},
+  {"question": "Why must lockwire not be twisted too tight, and how should its ends be finished?", "doc_id": "faa-ac-43-13-1b", "pages": [329, 330]},
+  {"question": "What can eddy current testing find besides surface cracks?", "doc_id": "faa-ac-43-13-1b", "pages": [234]},
+  {"question": "Which NDI method uses a glowing dye under black light to show surface cracks?", "doc_id": "faa-ac-43-13-1b", "pages": [247, 253, 254]},
+  {"question": "How does a vane-type damper stop the nose wheel from oscillating side to side?", "doc_id": "faa-amt-airframe", "pages": [761, 763, 764]},
+  {"question": "How long are leading-edge ice boots inflated, and what holds them flat when not in use?", "doc_id": "faa-amt-airframe", "pages": [892]},
+  {"question": "Why do passenger chemical oxygen generators not need long tubing runs?", "doc_id": "faa-amt-airframe", "pages": [927]},
+  {"question": "What does a magnetic plug in the turbine engine oil return line tell the mechanic?", "doc_id": "faa-amt-powerplant", "pages": [274, 275]},
+  {"question": "What should be done if a turbine engine's exhaust temperature climbs too fast during start?", "doc_id": "faa-amt-powerplant", "pages": [425, 426]},
+  {"question": "What causes corrosion along the grain boundaries of 7075 aluminium next to a steel fastener?", "doc_id": "faa-amt-general", "pages": [331, 333]},
+  {"question": "What are the twelve common human error preconditions in maintenance called?", "doc_id": "faa-amt-general", "pages": [636, 650, 652]},
+  {"question": "Uncontained high-pressure turbine interstage seal failure on GP7200 engines: what must be replaced?", "doc_id": "ad:2026-20666", "pages": []},
+  {"question": "Solid-state relay in the left windshield heat on a PC-24 can let current flow backwards", "doc_id": "ad:2026-18848", "pages": []},
+  {"question": "Cracked restraint brackets on the anti-ice piccolo tube in A330 nacelle inlet cowls", "doc_id": "ad:2026-19084", "pages": []},
+  {"question": "Dash 8-400 elevator power control unit bracket and front spar cracking fix", "doc_id": "ad:2026-08303", "pages": []},
+  {"question": "787 lavatory and galley potable water clamshell couplings missing safety strap", "doc_id": "ad:2026-08306", "pages": []},
+  {"question": "BK 117 C-1 louver box came off in flight, what check is required?", "doc_id": "ad:2026-20722", "pages": []},
+  {"question": "New airworthiness limitation added to the maintenance program for ATR42-500", "doc_id": "ad:2026-18053", "pages": []}
+]
