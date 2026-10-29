@@ -195,6 +195,16 @@ async def test_price_override_applies_from_100k_prompt_tokens(fake: FakeOpenRout
     assert info.price(100_000).completion == pytest.approx(2.5e-6)
 
 
+async def test_time_based_price_uses_the_peak_and_bad_listings_are_skipped(fake: FakeOpenRouter) -> None:
+    async with fake.client() as http:
+        catalog = ModelCatalog(http, "https://openrouter.ai/api/v1")
+        info = await catalog.get("deepseek/deepseek-v4.1-flash-1017")
+        assert info.price(0).prompt == pytest.approx(3e-7) and info.price(0).completion == pytest.approx(1.2e-6)
+        with pytest.raises(UnsupportedModel):
+            await catalog.get("broken/listing")
+        assert (await catalog.get(HAIKU)).id == HAIKU  # the rest of the catalog still loaded
+
+
 def test_config_version_ignores_secrets_but_tracks_behaviour() -> None:
     base = settings().config_version()
     assert settings(openrouter_api_key="sk-other", db_password_app_rw="y").config_version() == base

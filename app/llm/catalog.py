@@ -5,6 +5,7 @@ Rerank models are in neither list and report $0 per token, because they're bille
 price comes from config (`rerank_price_per_search`).
 """
 
+import logging
 import math
 import time
 from dataclasses import dataclass, field
@@ -14,6 +15,7 @@ import httpx2
 
 from app.llm.errors import UnsupportedModel
 
+logger = logging.getLogger(__name__)
 TTL_S = 3600.0
 # Conservative token estimate for the pre-call spend check. SPIKE §2 found words x 1.35 undercounts by
 # about 25 % on this corpus; chars / 3 overestimates English prose instead, which is the safe side for a cap.
@@ -44,14 +46,21 @@ def estimate_tokens(chars: int) -> int:
 
 
 def _parse(m: dict[str, Any]) -> ModelInfo:
+    """`pricing.overrides` come in two shapes (seen live, 2026-10-29): by prompt size (`min_prompt_tokens`)
+    and by time (`utc_days`, `utc_start`/`utc_end`, e.g. DeepSeek's weekday peak). For a spend cap the safe
+    reading of a time-based price is the highest one, so those are folded into the base tier by max()."""
     p = m.get("pricing") or {}
-    tiers = [PriceTier(0, float(p.get("prompt") or 0), float(p.get("completion") or 0))]
+    prompt, completion = float(p.get("prompt") or 0), float(p.get("completion") or 0)
+    by_size = [o for o in p.get("overrides") or [] if "min_prompt_tokens" in o]
     for o in p.get("overrides") or []:
+        if "min_prompt_tokens" not in o:
+            prompt = max(prompt, float(o.get("prompt") or 0))
+            completion = max(completion, float(o.get("completion") or 0))
+    tiers = [PriceTier(0, prompt, completion)]
+    for o in by_size:
         tiers.append(
             PriceTier(
-                int(o["min_prompt_tokens"]),
-                float(o.get("prompt", tiers[0].prompt)),
-                float(o.get("completion", tiers[0].completion)),
+                int(o["min_prompt_tokens"]), float(o.get("prompt", prompt)), float(o.get("completion", completion))
             )
         )
     return ModelInfo(
@@ -76,7 +85,12 @@ class ModelCatalog:
             r = await self.http.get(f"{self.base_url}{path}")
             r.raise_for_status()
             for m in r.json()["data"]:
-                models[m["id"]] = _parse(m)
+                try:
+                    models[m["id"]] = _parse(m)
+                except (KeyError, TypeError, ValueError):
+                    # One odd listing must not take down the catalog. The model is simply unknown, and
+                    # unknown models fail closed in get(). The daily canary reports it.
+                    logger.warning("unparseable model listing skipped: %s", m.get("id"))
         self._models, self._loaded_at = models, time.monotonic()
 
     async def get(self, model: str) -> ModelInfo:

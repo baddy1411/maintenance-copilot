@@ -26,6 +26,13 @@ CHAT_MODELS = [
     {"id": LUNA, "expiration_date": None,
      "supported_parameters": ["max_tokens", "reasoning", "response_format", "tools"],
      "pricing": {"prompt": "0.0000001", "completion": "0.0000005"}},
+    # Time-of-day pricing, shape copied from the live listing (2026-10-29).
+    {"id": "deepseek/deepseek-v4.1-flash-1017", "supported_parameters": ["max_tokens"],
+     "pricing": {"prompt": "0.00000015", "completion": "0.0000006", "overrides": [
+         {"utc_days": ["saturday", "sunday"], "prompt": "0.00000015", "completion": "0.0000006"},
+         {"utc_days": ["monday"], "utc_start": 100, "utc_end": 400,
+          "prompt": "0.0000003", "completion": "0.0000012"}]}},
+    {"id": "broken/listing", "pricing": {"prompt": "not-a-number"}},
 ]  # fmt: skip
 EMBED_MODELS = [{"id": VOYAGE, "supported_parameters": [], "pricing": {"prompt": "0.00000002", "completion": "0"}}]
 
