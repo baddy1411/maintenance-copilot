@@ -3,7 +3,7 @@ name: maintenance-copilot
 
 services:
   db:
-    image: pgvector/pgvector:0.8.2-pg17@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966
+    image: pgvector/pgvector:0.8.7-pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
     environment:
       POSTGRES_USER: postgres
       POSTGRES_DB: ${DB_NAME:-copilot}
