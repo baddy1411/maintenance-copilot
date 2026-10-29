@@ -8,6 +8,7 @@ license = "MIT"
 dependencies = [
     "alembic==1.20.1",
     "fastapi==0.162.0",
+    "httpx2==2.16.0",  # what openai 3.x uses; one HTTP stack for the SDK, rerank and catalog
     "langgraph==1.2.18",
     "langgraph-checkpoint-postgres==3.2.0",
     "openai==3.41.0",
