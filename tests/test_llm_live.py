@@ -52,7 +52,7 @@ async def test_live_round_trip() -> None:
             Verdict,
             max_tokens=600,
         )
-        vectors = await gw.embed(ctx, ["metal particles on chip detector", "soft brake pedal"])
+        vectors = (await gw.embed(ctx, ["metal particles on chip detector", "soft brake pedal"])).vectors
         ranked = await gw.rerank(ctx, "shiny bits in the oil", ["tyre pressure", "chip detector metal", "paint"])
 
     assert chat.text.strip() and verdict.component

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from datetime import date
 from typing import Literal
 from urllib.parse import quote
 
@@ -51,6 +52,17 @@ class Settings(BaseSettings):
     user_daily_cap_usd: float = 1.00
     global_daily_cap_usd: float = 5.00
     user_hash_salt: SecretStr = SecretStr("")
+
+    # Ingestion (DESIGN §6.2).
+    ingest_allowed_hosts: list[str] = [
+        "www.federalregister.gov",
+        "www.govinfo.gov",
+        "www.faa.gov",
+        "external.apic4e.faa.gov",
+    ]
+    ingest_user_agent: str = "maintenance-copilot/0.1 (+https://github.com/baddy1411/maintenance-copilot)"
+    ingest_job_cap_usd: float = 1.00  # per sync or backfill job, on top of the global daily cap
+    ad_backfill_from: date = date(2020, 1, 1)  # SCOPE.md: ADs from 2020 first
 
     def config_version(self) -> str:
         """Hash of the effective runtime config, stamped on ledger rows and traces (DESIGN §7.4).

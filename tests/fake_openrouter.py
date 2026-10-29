@@ -55,6 +55,7 @@ def error(status: int, message: str, headers: dict[str, str] | None = None) -> h
 class FakeOpenRouter:
     chat: deque[httpx2.Response] = field(default_factory=deque)
     rerank_responses: deque[httpx2.Response] = field(default_factory=deque)
+    embed_dim: int = 3
     requests: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
     def bodies(self, path: str) -> list[dict[str, Any]]:
@@ -71,7 +72,7 @@ class FakeOpenRouter:
             return self.chat.popleft()
         if path == "/embeddings":
             # Out of order on purpose: the gateway must sort by index.
-            items = [{"object": "embedding", "index": i, "embedding": [float(i)] * 3}
+            items = [{"object": "embedding", "index": i, "embedding": [float(i)] * self.embed_dim}
                      for i in reversed(range(len(body["input"])))]  # fmt: skip
             return httpx2.Response(
                 200,

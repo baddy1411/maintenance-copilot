@@ -27,6 +27,15 @@ Totals for the spike: about **2,875 handbook pages + 2,553 ADs + 182,910 SDRs**.
 - faa.gov **HTML** pages and nhtsa.gov return HTTP 403 to scripted fetches. We don't work around that (no fake browser headers). The FAA PDF and CSV files and the Federal Register API answer plain scripted requests, and those are all we need. The SDR file links were read once from the FAA page in a normal browser.
 - The fetcher sends an honest User-Agent and waits 0.1 s between AD requests.
 
+### AD text quirks (measured on the 2,545 ADs from 2020–2026, issue #5)
+
+- **AD number ≠ Federal Register document number.** FR document `2026-20098` is AD `2026-20-08`. The AD number is in the header block, which is written several ways: `AD 2020-25-03R1]`, `AD-2025-05-15]`, `AD No. 2020-19-12]`, a bare `2026-08-11]`, two-digit years (`AD 92-02-14 R1`), and typos (`Amendment 39-21656 AD …` with no semicolon). The parser finds it in **100 %** of documents.
+- **One AD number can appear on several documents.** Corrections (`C1-…`) and republications (`R1-…`) are separate FR documents, and 45 AD numbers appear more than once. Revisions (`…R1`) are new AD numbers that replace the original. `documents.doc_kind` records which kind each document is.
+- **"Replaces AD …"** in section (b) gives supersession for 23.8 % of ADs. Applicability is found in 97.1 %, model designators in 85.2 % (best effort: series fragments such as `117` from "MBB-BK 117" are included), and JASC codes in 42.9 %.
+- **276 ADs (11 %) contain NUL and other control characters** in the govinfo HTML, as GPO formatting artifacts before separator lines. Postgres text can't store NUL, so they're stripped at extraction.
+- **2026 text indents section headers** (`\n\n (d) Subject`), unlike earlier years.
+- Re-measure after any parser change: `uv run python scripts/measure_ad_parse.py`.
+
 ## Synthetic data (generated)
 
 | Table | Purpose | Notes |

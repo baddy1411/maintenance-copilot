@@ -44,6 +44,12 @@ MAX_TOKENS_CEILING = 8000
 
 
 @dataclass(frozen=True)
+class EmbedResult:
+    vectors: list[list[float]]
+    cost: float
+
+
+@dataclass(frozen=True)
 class ChatResult:
     text: str
     finish_reason: str | None
@@ -209,7 +215,7 @@ class Gateway:
 
     # ---- embeddings and rerank --------------------------------------------------------------------
 
-    async def embed(self, ctx: CallContext, texts: Sequence[str], *, model: str | None = None) -> list[list[float]]:
+    async def embed(self, ctx: CallContext, texts: Sequence[str], *, model: str | None = None) -> EmbedResult:
         model = model or self.s.embed_model
         info = await self.catalog.get(model)
         safe = [redact(t) for t in texts]
@@ -223,10 +229,10 @@ class Gateway:
                 raise CreditsExhausted(str(exc)) from exc
             raise
         u = r.usage.model_dump() if r.usage else {}
-        await self._record(ctx, model, started, "ok", cost=float(u.get("cost") or 0.0),
-                           provider=(r.model_extra or {}).get("provider"),
+        cost = float(u.get("cost") or 0.0)
+        await self._record(ctx, model, started, "ok", cost=cost, provider=(r.model_extra or {}).get("provider"),
                            prompt_tokens=u.get("prompt_tokens"))  # fmt: skip
-        return [d.embedding for d in sorted(r.data, key=lambda d: d.index)]
+        return EmbedResult([d.embedding for d in sorted(r.data, key=lambda d: d.index)], cost)
 
     async def rerank(
         self, ctx: CallContext, query: str, documents: Sequence[str], *, top_n: int | None = None,

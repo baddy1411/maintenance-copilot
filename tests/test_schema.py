@@ -9,13 +9,16 @@ import pytest
 from psycopg import errors
 
 from app.config import Settings
-from app.migrate import ExtensionMismatch, check_vector_extension, migrate
+from app.migrate import MIGRATIONS, ExtensionMismatch, check_vector_extension, migrate
 
 pytestmark = pytest.mark.integration
 
 
 def test_migrate_is_idempotent(db: Settings) -> None:
-    assert migrate(db) == "0003"  # second run on an up-to-date database is a no-op
+    from alembic.script import ScriptDirectory
+
+    head = ScriptDirectory(str(MIGRATIONS)).get_current_head()
+    assert migrate(db) == head  # second run on an up-to-date database is a no-op
 
 
 def test_pgvector_version_is_pinned(db: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
