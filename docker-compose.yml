@@ -1,0 +1,29 @@
+# Local stack. Services are added as their Phase 2 slices land (api, worker, web): see issue #15.
+name: maintenance-copilot
+
+services:
+  db:
+    image: pgvector/pgvector:0.8.2-pg17@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: ${DB_NAME:-copilot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run make env}
+      DB_PASSWORD_MIGRATOR: ${DB_PASSWORD_MIGRATOR:?run make env}
+      DB_PASSWORD_APP_RW: ${DB_PASSWORD_APP_RW:?run make env}
+      DB_PASSWORD_TOOLS_RO: ${DB_PASSWORD_TOOLS_RO:?run make env}
+      DB_PASSWORD_INGEST_RW: ${DB_PASSWORD_INGEST_RW:?run make env}
+      DB_PASSWORD_MCP_RW: ${DB_PASSWORD_MCP_RW:?run make env}
+    volumes:
+      - ./infra/db:/bootstrap:ro
+      - ./infra/db/init.sh:/docker-entrypoint-initdb.d/00-init.sh:ro
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  pgdata:
