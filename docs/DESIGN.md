@@ -1,6 +1,6 @@
 # Design
 
-Status: **DRAFT v2**. This is the Elephant draft revised after three Goldfish reviews (security, cost and scale, operations), and every finding is in the [Review log](#review-log). It needs approval at the Phase 1 gate. Last updated 2026-10-29.
+Status: **v2, APPROVED 2026-10-29** at the Phase 1 gate. This is the Elephant draft revised after three Goldfish reviews (security, cost and scale, operations), and every finding is in the [Review log](#review-log). Later changes are logged with their reason. Last updated 2026-10-29.
 
 Inputs: `PLAN.md`, `docs/SCOPE.md`, `docs/DATA.md`, `docs/AGENT.md`, `docs/SPIKE.md`. Decisions that had real alternatives are recorded in `docs/adr/`. Prices marked ASSUMED were not read from a live price page and must be re-checked before money is spent (ADR-0005).
 
