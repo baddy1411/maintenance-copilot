@@ -22,7 +22,8 @@ flowchart TD
 - **Step cap:** `act` loops at most N times (N set in config; the spike uses 6). When the cap is hit, the agent goes to `diagnose` with whatever evidence it has and must say that the evidence is incomplete.
 - **Approval** uses LangGraph `interrupt()` with a checkpointer (verified API, 2026-10-28: `from langgraph.types import interrupt, Command`; resume with `Command(resume=...)` on the same `thread_id`). The interrupt payload is the draft. The resume value is an `ApprovalDecision`.
 - **Writes happen only after the interrupt.** No tool the LLM can call writes to the database. `write_work_order` is a graph node, not an LLM tool, so the model cannot skip approval.
-- **Idempotency:** the client sends an `Idempotency-Key` header. If it doesn't, the fallback is `sha256(registration + normalised title + UTC date)`. The key deliberately does **not** include `thread_id`, so a client retry that opens a new thread still dedupes (spike check 3 proves this). The insert uses `ON CONFLICT (idempotency_key) DO NOTHING` and then selects the existing row.
+- **Idempotency (revised in DESIGN v2 §6.3 after the security review):** **one work order per run** (`work_orders.run_id UNIQUE`). The client's `Idempotency-Key` only dedupes `POST /runs` retries, scoped to `(created_by, client_key)`, and the same key with a different payload returns 409. The model never sees or produces a key. The v1 fallback, `sha256(registration + title + date)`, was removed, because two real faults on one aircraft on one day collided and the second work order was silently dropped. Spike check 3 still describes the intended behaviour: a retried request does not create a second work order.
+- **Approval is a server-side record, not the resume value.** The decision endpoint takes the approver from the JWT. It writes an `approvals` row through a compare-and-set on `runs.status`, bound to `draft_sha256`. The `write` node re-reads that row in the same transaction as the work-order and audit inserts (DESIGN §6.3).
 
 ## Tools the LLM can call (all read-only)
 
@@ -57,7 +58,7 @@ class QuerySdrArgs(BaseModel):
     aircraft_model: str | None = None
     jasc_code: str | None = JascCode
     part_number: str | None = None
-    text: str | None = Field(default=None, description="Keyword or semantic match on the discrepancy text")
+    text: str | None = Field(default=None, description="Keyword (full-text) match on the discrepancy text")
     since: date | None = None
     until: date | None = None
     mode: Literal["list", "count_by_jasc", "count_by_part", "count_by_month"] = "list"
@@ -93,12 +94,13 @@ class WorkOrderDraft(BaseModel):
     diagnosis_summary: str
     steps: list[str] = Field(min_length=1, max_length=20)
     citations: list[Citation]
-    idempotency_key: str
+    # No idempotency_key: the server derives one work order per run (DESIGN v2 §6.3).
 
 class ApprovalDecision(BaseModel):
+    # Request body of POST /runs/{id}/decision. The approver comes from the JWT, never from the body.
     action: Literal["approve", "edit", "reject"]
-    approver_id: str
-    edited_draft: WorkOrderDraft | None = None   # required when action == "edit"
+    draft_sha256: str                            # the draft the supervisor saw; a mismatch returns 409
+    edited_draft: WorkOrderDraft | None = None   # required when action == "edit"; registration can't change
     reason: str | None = None                    # required when action == "reject"
 ```
 
