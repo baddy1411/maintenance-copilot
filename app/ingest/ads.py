@@ -11,7 +11,6 @@ import hashlib
 import json
 import logging
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
 from urllib.parse import urlencode
@@ -21,10 +20,11 @@ from psycopg_pool import AsyncConnectionPool
 
 from app.config import Settings
 from app.ingest.ad_parse import PARSER_VERSION, ParsedAD, parse_ad, text_from_govinfo_html
-from app.ingest.chunk import Chunk, chunk_text
+from app.ingest.chunk import chunk_text
+from app.ingest.common import JobCapReached, SyncReport, embed_chunks
 from app.ingest.fetch import FetchFailed, FetchRefused, SafeFetcher
 from app.ingest.store import DocumentRow, bump_corpus_version, quarantine, stored_sha, upsert_document
-from app.llm import CallContext, Gateway
+from app.llm import Gateway
 
 logger = logging.getLogger(__name__)
 
@@ -32,26 +32,7 @@ FR_API = "https://www.federalregister.gov/api/v1/documents.json"
 FR_FIELDS = ("document_number", "title", "publication_date", "effective_on", "pdf_url", "html_url")
 SOURCE = "ads"
 OVERLAP_DAYS = 3
-EMBED_BATCH = 64
 MIN_TEXT, MAX_TEXT = 1_000, 2_000_000
-
-
-@dataclass
-class SyncReport:
-    run_id: int = 0
-    fetched: int = 0
-    inserted: int = 0
-    updated: int = 0
-    unchanged: int = 0
-    quarantined: int = 0
-    failed: int = 0
-    cost: float = 0.0
-    stopped_early: str | None = None
-    errors: list[str] = field(default_factory=list)
-
-
-class JobCapReached(RuntimeError):
-    pass
 
 
 def govinfo_text_url(pdf_url: str) -> str:
@@ -97,17 +78,6 @@ async def list_fr_ads(fetcher: SafeFetcher, since: date, until: date) -> AsyncIt
             if page >= int(res.get("total_pages") or 1):
                 break
             page += 1
-
-
-async def _embed(gateway: Gateway, chunks: list[Chunk], report: SyncReport, cap: float) -> list[list[float]]:
-    vectors: list[list[float]] = []
-    for i in range(0, len(chunks), EMBED_BATCH):
-        if report.cost >= cap:
-            raise JobCapReached(f"job cap ${cap:.2f} reached (${report.cost:.4f})")
-        r = await gateway.embed(CallContext(kind="embed_corpus"), [c.text for c in chunks[i : i + EMBED_BATCH]])
-        report.cost += r.cost
-        vectors.extend(r.vectors)
-    return vectors
 
 
 async def sync_ads(
@@ -167,7 +137,7 @@ async def sync_ads(
                     committed_through = max(committed_through or pub, pub)
                     continue
             chunks = chunk_text(doc_id, text, prefix=ad_prefix(parsed))
-            vectors = await _embed(gateway, chunks, report, settings.ingest_job_cap_usd) if gateway else None
+            vectors = await embed_chunks(gateway, chunks, report, settings.ingest_job_cap_usd) if gateway else None
             doc = DocumentRow(
                 doc_id=doc_id, source="ad", ingest_origin="official", title=fr["title"], sha256=sha,
                 access_level="public", url=url, ad_number=parsed.ad_number, doc_kind=parsed.kind,

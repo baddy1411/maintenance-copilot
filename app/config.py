@@ -3,6 +3,7 @@
 import hashlib
 import json
 from datetime import date
+from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
 
@@ -63,6 +64,14 @@ class Settings(BaseSettings):
     ingest_user_agent: str = "maintenance-copilot/0.1 (+https://github.com/baddy1411/maintenance-copilot)"
     ingest_job_cap_usd: float = 1.00  # per sync or backfill job, on top of the global daily cap
     ad_backfill_from: date = date(2020, 1, 1)  # SCOPE.md: ADs from 2020 first
+    # Admin uploads are stored under their sha256, never their filename (DESIGN §6.2). Local default;
+    # an object store on AWS (Phase 8).
+    upload_dir: Path = Path("data/uploads")
+    pdf_max_bytes: int = 300_000_000
+    pdf_max_pages: int = 3_000
+    pdf_cpu_s: int = 300
+    pdf_mem_mb: int = 2_048
+    pdf_wall_s: float = 600.0
 
     def config_version(self) -> str:
         """Hash of the effective runtime config, stamped on ledger rows and traces (DESIGN §7.4).

@@ -10,6 +10,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Literal
 
+from app.ingest.text import clean
+
 DocKind = Literal["original", "correction", "revision"]
 
 # Bump on any change to parsing or chunking output. It's part of the stored content hash, so documents
@@ -57,16 +59,11 @@ class ParsedAD:
     applicability: str | None = None
 
 
-# GPO formatting artifacts: 276 of 2,545 ADs (2020-2026) carry NULs and other control characters
-# before their separator lines. Postgres text can't hold NUL, and none of them carry meaning.
-CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
-
-
 def text_from_govinfo_html(page: str) -> str:
     """The FR text sits in one <pre> block. Tags stripped, entities decoded (&amp; -> &), control
     characters removed."""
     m = re.search(r"<pre>(.*)</pre>", page, re.S)
-    return CONTROL.sub("", html.unescape(re.sub(r"<[^>]+>", "", m.group(1)))) if m else ""
+    return clean(html.unescape(re.sub(r"<[^>]+>", "", m.group(1)))) if m else ""
 
 
 def normalise_ad(number: str, revision: str | None = None) -> str:

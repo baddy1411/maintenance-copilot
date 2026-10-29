@@ -39,8 +39,13 @@ The two structural changes from the reviews: agent runs execute as worker jobs i
 | Schema, roles, `migrate` | #3 | Done | `tests/test_schema.py` |
 | LLM gateway | #4 | Done; live smoke test $0.00254 | `tests/test_llm_*.py` |
 | AD ingestion | #5 | Done; **full 2020–2026 backfill loaded locally** | `tests/test_ingest_*.py`, below |
+| Handbooks, AC, sandboxed uploads | #7 | Done; **all 4 PDFs loaded locally** | `tests/test_pdf.py`, `tests/test_ingest_pdfs.py` |
 
-**Local corpus after the AD backfill (2026-10-29):**
+How each slice was built, step by step: [BUILD_LOG.md](BUILD_LOG.md). The ingestion design in detail: [ingestion.md](ingestion.md).
+
+**Local corpus (2026-10-29):** 2,549 documents, **53,133 chunks, all embedded**, 327 MB. ADs are broken down below; the handbooks and AC add 2,875 pages and 8,935 chunks.
+
+AD backfill:
 - 2,545 ADs (2020-01-06 to 2026-10-27): 11 corrections, 10 revisions, 376 marked superseded (all pointing to a newer AD).
 - 44,198 chunks, all embedded with voyage-4-lite. Average 1,405 characters, none over the 450-token cap.
 - 280 MB database.
@@ -54,4 +59,5 @@ The two structural changes from the reviews: agent runs execute as worker jobs i
 | Gateway live smoke test | $0.0025 |
 | AD backfill | $0.3319 (estimate $0.35, cap $0.50) |
 | `embed-missing` for the 8 text-only ADs | $0.0011 |
-| **Total** | **≈ $4.08** |
+| Handbooks and AC embedding | $0.0454 (estimate $0.052, cap $0.10) |
+| **Total** | **≈ $4.12** |

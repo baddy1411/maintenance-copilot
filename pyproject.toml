@@ -16,6 +16,7 @@ dependencies = [
     "procrastinate==3.10.0",
     "psycopg[binary,pool]==3.3.6",
     "pydantic==2.14.1",
+    "pypdfium2==5.14.0",
     "pydantic-settings==2.16.2",
     "sqlalchemy==2.1.6",
     "uvicorn==0.54.0",
@@ -63,7 +64,7 @@ exclude = ["spikes/"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["procrastinate.*", "pgvector.*", "testcontainers.*"]
+module = ["procrastinate.*", "pgvector.*", "testcontainers.*", "pypdfium2.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -77,8 +77,8 @@ async def upsert_document(
         await conn.execute("DELETE FROM chunks WHERE doc_id = %s", (doc.doc_id,))
         async with conn.cursor() as c:
             await c.executemany(
-                "INSERT INTO chunks (chunk_id, doc_id, page, ord, text) VALUES (%s, %s, %s, %s, %s)",
-                [(ch.chunk_id, ch.doc_id, ch.page, ch.ord, ch.text) for ch in chunks],
+                "INSERT INTO chunks (chunk_id, doc_id, page, page_label, ord, text) VALUES (%s, %s, %s, %s, %s, %s)",
+                [(ch.chunk_id, ch.doc_id, ch.page, ch.page_label, ch.ord, ch.text) for ch in chunks],
             )
             if vectors is not None:
                 await c.executemany(

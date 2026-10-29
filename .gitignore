@@ -8,3 +8,5 @@ spikes/.cache/
 .mypy_cache/
 .ruff_cache/
 *.bak
+# Admin uploads and other local data (DESIGN §6.2: stored by sha256)
+data/

@@ -37,6 +37,13 @@ Totals for the spike: about **2,875 handbook pages + 2,553 ADs + 182,910 SDRs**.
 - Re-measure after any parser change: `uv run python scripts/measure_ad_parse.py`.
 - **Full 2020–2026 load** (`copilot ingest-ads --since 2020-01-01`, 2026-10-29): 2,545 FR documents, 0 quarantined, 0 failed. 44,198 chunks and vectors, **$0.332 to embed**, 33.5 min (mostly govinfo fetches at the polite rate).
 
+### Handbook and AC quirks (issue #7)
+
+- **Titles** come from each PDF's own metadata: FAA-H-8083-30B (General, 2023), FAA-H-8083-31B (Airframe, 2023), FAA-H-8083-32B (Powerplant, 2023), and AC 43.13-1B with Change 1 (9/8/98).
+- **Page numbers:** General and Powerplant embed PDF page labels (`10-25`, index pages `I-11`). Airframe and the AC don't, but print them in the text: the last token of the page (`8-6`), or the AC footer `Page 8-22 Par 8-37`. Labels were recovered for 100 / 100 / 96 / 91 % of pages.
+- **Private-use glyphs:** PDFium extracts symbol-font characters as private-use code points (`\uf8e7` in the AC's paragraph references). They're replaced with spaces.
+- **Load (2026-10-29):** 4 PDFs, 2,875 pages, 9 near-empty (scanned figures, skipped), 8,935 chunks, $0.045 to embed. The full method is in `docs/ingestion.md`.
+
 ## Synthetic data (generated)
 
 | Table | Purpose | Notes |

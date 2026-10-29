@@ -18,6 +18,7 @@ class Chunk:
     ord: int
     text: str
     page: int | None = None
+    page_label: str | None = None
 
 
 def estimate_tokens(chars: int) -> int:
@@ -45,7 +46,10 @@ def _capped(text: str, cap: int) -> Iterator[str]:
     yield from _capped(" ".join(words[mid:]), cap)
 
 
-def chunk_text(doc_id: str, text: str, prefix: str = "", page: int | None = None, start_ord: int = 0) -> list[Chunk]:
+def chunk_text(
+    doc_id: str, text: str, prefix: str = "", page: int | None = None, start_ord: int = 0,
+    page_label: str | None = None,
+) -> list[Chunk]:  # fmt: skip
     """`prefix` (for ADs: number, make, models) is added to every chunk so the identifiers survive
     chunking (SPIKE §2). It counts towards the token cap."""
     out: list[Chunk] = []
@@ -57,5 +61,6 @@ def chunk_text(doc_id: str, text: str, prefix: str = "", page: int | None = None
                 continue
             ord_ = start_ord + len(out)
             suffix = f":p{page}:c{ord_}" if page is not None else f":c{ord_}"
-            out.append(Chunk(chunk_id=f"{doc_id}{suffix}", doc_id=doc_id, ord=ord_, text=piece, page=page))
+            out.append(Chunk(chunk_id=f"{doc_id}{suffix}", doc_id=doc_id, ord=ord_, text=piece, page=page,
+                             page_label=page_label))  # fmt: skip
     return out

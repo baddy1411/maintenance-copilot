@@ -4,7 +4,7 @@
 
 Cited Q&A and an approval-gated troubleshooting agent over live FAA maintenance data: Airworthiness Directives, Service Difficulty Reports and the FAA AMT handbooks.
 
-- Scope: [`docs/SCOPE.md`](docs/SCOPE.md) · Data: [`docs/DATA.md`](docs/DATA.md) · Design (approved v2): [`docs/DESIGN.md`](docs/DESIGN.md) · Decisions: [`docs/adr/`](docs/adr/) · Progress: [`docs/PROGRESS.md`](docs/PROGRESS.md)
+- Scope: [`docs/SCOPE.md`](docs/SCOPE.md) · Data: [`docs/DATA.md`](docs/DATA.md) · Design (approved v2): [`docs/DESIGN.md`](docs/DESIGN.md) · Decisions: [`docs/adr/`](docs/adr/) · Progress: [`docs/PROGRESS.md`](docs/PROGRESS.md) · Build log: [`docs/BUILD_LOG.md`](docs/BUILD_LOG.md) · Ingestion: [`docs/ingestion.md`](docs/ingestion.md)
 
 ## Development
 
