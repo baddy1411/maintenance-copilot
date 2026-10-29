@@ -97,7 +97,8 @@ flowchart LR
 | Table | Key columns | Notes |
 | --- | --- | --- |
 | `documents` | `doc_id` PK, `source` (handbook / ac / ad / upload), `ingest_origin` (official / admin_upload), `title`, `ad_number`, dates, `supersedes[]`, `superseded_by`, `make[]`, `models[]`, `url` (https, allow-listed host), `sha256`, `access_level` enum (`public`, `restricted`), `ingested_at` | Official FAA material is `public`. Uploads default to `restricted` |
-| `chunks` | `chunk_id` PK, `doc_id`, `page`, `ord`, `text` (≤ 450 tokens), `tsv` (generated), `embedding halfvec(1024)`, `embed_model` | **One partial HNSW index per `embed_model`**, built `CONCURRENTLY` after bulk load; GIN on `tsv` |
+| `chunks` | `chunk_id` PK, `doc_id`, `page`, `ord`, `text` (≤ 450 tokens), `tsv` (generated) | GIN on `tsv` |
+| `chunk_embeddings` | (`chunk_id`, `embed_model`) PK, `embedding halfvec(1024)` | **One partial HNSW index per `embed_model`**, built `CONCURRENTLY` after the backfill. Separate table so two models can coexist per chunk (§8.1; change P2-1) |
 | `retrieval_config` | single row: `active_embed_model`, `corpus_version` | The API reads it. Query and index model must match, and retrieval asserts this (§8.1) |
 | `sdr` | `sdr_id` PK, `difficulty_date`, `jasc`, raw and normalised make/model, part fields, `discrepancy`, `tsv`, `row_hash`, `tombstoned_at` | **FTS only, no embeddings** (an HNSW index over 1.5M rows would need an instance of about 32 GB). B-tree on `(model, jasc, difficulty_date)` |
 | `model_aliases` | `raw` → `canonical` | Spike §4 |
@@ -106,8 +107,8 @@ flowchart LR
 | `run_events` | `run_id`, `seq`, `ts`, `kind`, `payload` | SSE tails this table, so a client can re-attach with `GET /runs/{id}/events?after=seq` |
 | `approvals` | `approval_id`, `run_id` UNIQUE, `approver_id` (from the JWT), `action`, `draft_sha256`, `edited_draft`, `ts` | One decision per run, enforced by compare-and-set (§6.3) |
 | `work_orders` | `wo_id`, `run_id` UNIQUE, `approval_id`, `registration`, `title`, `priority`, `status`, `diagnosis`, `steps`, `citations`, `created_by`, `approved_by`, timestamps | **One work order per run.** Written only by the `write` node |
-| `audit_log` | `id`, `ts`, `actor` (from the JWT), `action`, `run_id`, `payload_redacted`, `prev_hash`, `row_hash` | Hash chain checked by a daily job. Partitioned by month |
-| `llm_calls` | `ts`, `run_id`, `user_hash`, `kind`, `model`, `provider`, tokens, `cost`, `latency_ms`, `status`, `prompt_version`, `config_version` | Cost ledger. Partitioned by month |
+| `audit_log` | `id`, `ts`, `actor` (from the JWT), `action`, `run_id`, `payload_redacted`, `prev_hash`, `row_hash` | Hash chain checked by a daily job. Monthly partitions from Phase 8 (change P2-2) |
+| `llm_calls` | `ts`, `run_id`, `user_hash`, `kind`, `model`, `provider`, tokens, `cost`, `latency_ms`, `status`, `prompt_version`, `config_version` | Cost ledger. Monthly partitions from Phase 8 (change P2-2) |
 | `limits` | `(subject, window, kind)` → counter | Rate and spend limits (replaces Redis) |
 | `ingest_runs` | `source`, start and finish times, status, fetched / inserted / updated / quarantined counts, `cost` | One row per sync run |
 | `sync_state` | `source`, `high_water_mark` | Advanced only after commit. Each sync re-reads a 3-day overlap |
@@ -139,7 +140,7 @@ flowchart LR
 | Checkpoints | When a run reaches a terminal state, keep only its final checkpoint. Purge those after 30 days. `runs`, `approvals`, `work_orders` and `audit_log` are the durable record. Estimate: about 3–8 MB per run without this rule |
 | Finished queue jobs | Pruned after 30 days |
 | `run_events` | Pruned after 30 days |
-| `llm_calls`, `audit_log` | Monthly partitions. `audit_log` is kept for the lifetime of the deployment |
+| `llm_calls`, `audit_log` | Monthly partitions from Phase 8 (change P2-2). `audit_log` is kept for the lifetime of the deployment |
 | Backups | RDS automated backups for 7 days with PITR. A final snapshot on destroy (Terraform variable, default true). `make backup` / `make restore` run pg_dump of the app schemas, plus an embeddings export so a rebuild doesn't pay to embed again. **A restore drill is a Phase 8 exit check** |
 
 ## 6. Data flows
@@ -496,3 +497,14 @@ The cost review also suggested tightening the Q&A cost target: **accepted**, $0.
 2. **Redis was removed** (ADR-0009). The cost and ops reviews each raised it independently.
 
 Everything else is additive detail inside the v1 structure.
+
+### Changes after approval
+
+Logged as they're made, each with its reason.
+
+| # | Date | Change | Why |
+| --- | --- | --- | --- |
+| P2-1 | 2026-10-29 | Embeddings moved from `chunks` to their own `chunk_embeddings` table, keyed on (`chunk_id`, `embed_model`) | v2 put `embedding` and `embed_model` on `chunks`, which holds only one vector per chunk. That contradicts §8.1, where new chunks get embedded with both models during a backfill. Found while writing migration 0001 |
+| P2-2 | 2026-10-29 | `llm_calls` and `audit_log` start unpartitioned; monthly partitioning is added before the Phase 8 load test | Partitioning needs a partition-creation job. At Phase 2 volumes (thousands of rows) it adds moving parts with no benefit. Phase 8 is the first phase that produces volume |
+| P2-3 | 2026-10-29 | Pinned **PostgreSQL 17 + pgvector 0.8.2** (`pgvector/pgvector:0.8.2-pg17`, by digest) | RDS ships pgvector 0.8.2 on its latest 16/17/18 minors (AWS release notes, checked 2026-10-29). 0.8.x has iterative scans. The newer 0.8.7 image would drift from RDS |
+| P2-4 | 2026-10-29 | The procrastinate and LangGraph schemas are wrapped as Alembic revisions 0002 and 0003. LangGraph's `setup()` runs on its own autocommit connection | procrastinate has no version table, so each bump gets a revision that applies its upgrade files. Some of LangGraph's setup steps use `CREATE INDEX CONCURRENTLY`, which can't run inside Alembic's transaction |

@@ -45,6 +45,7 @@ packages = ["app"]
 line-length = 120
 target-version = "py313"
 extend-exclude = ["spikes", "*.md"]
+force-exclude = true
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "S", "ASYNC", "RUF"]
