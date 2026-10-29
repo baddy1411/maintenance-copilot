@@ -66,6 +66,62 @@ Other observations:
 
 **The first dense run was stopped by account credit.** It embedded 400 batches until OpenRouter returned `402 Insufficient credits. This account never purchased credits` at a cumulative spend of $0.213. Those vectors were lost because the script only saved at the end. **Fixed:** `embed()` now saves each batch of 64 as it lands and resumes from those batches. After credits were added, the rerun embedded the full corpus for **$0.36**. My estimate of $0.29 came from words × 1.35, which undercounts tokens on this technical text by about 25%. Phase 4 cost estimates should use a real tokenizer count, not a word ratio.
 
+## 2b. Retrieval matrix: better embedders, rewrite and rerank VERIFIED
+
+Section 2 left two problems: the question set favoured keywords, and nothing beat BM25. So I wrote a second set and tested the four fixes listed above (except RRF weighting) on the same 49,871-chunk corpus.
+
+**Scenario set** (`spikes/retrieval_questions_scenario.json`, n=22): each question was written first, in a technician's words ("Drained the oil and the rag is full of shiny bits. Do I pull the engine?"), and only then did I look for the page or AD that answers it. 14 target handbook or AC pages and 8 target ADs from 2022–2025.
+
+**Methods**
+- `bm25`, `dense[m]` and `hybrid[m]` (RRF, k=60, top 50 of each) as in section 2.
+- `+rewrite`: `claude-haiku-5.5` rewrites the question with formal technical terms, and the original question is kept in front of the rewrite.
+- `+rerank`: `cohere/rerank-4-pro` (via OpenRouter `/rerank`) reorders the hybrid top 50, scored against the **original** question.
+- Embedders: `voyageai/voyage-4-lite` (1024-d), `qwen/qwen3-embedding-4b` (2560-d), `voyageai/voyage-4-large` (1024-d).
+
+Command: `uv run python s2_retrieval.py --k 5` (2026-10-29, 1 h 08 min wall clock, almost all of it embedding; qwen was slow and returned `429 engine_overloaded`, so `embed()` now retries with backoff). Raw output: `spikes/.cache/s2_results.json`.
+
+recall@5 / MRR@5:
+
+| Method | page (n=18) | scenario (n=22) | all (n=40) |
+| --- | --- | --- | --- |
+| bm25 | 0.89 / 0.75 | **0.50** / 0.37 | 0.68 / 0.54 |
+| bm25+rewrite | 0.94 / 0.71 | 0.73 / 0.61 | 0.82 / 0.66 |
+| dense[voyage-4-lite] | 0.78 / 0.61 | 0.77 / 0.54 | 0.78 / 0.57 |
+| hybrid[voyage-4-lite] | 0.89 / 0.75 | 0.82 / 0.55 | 0.85 / 0.64 |
+| hybrid+rewrite[voyage-4-lite] | 0.94 / 0.65 | 0.95 / 0.75 | 0.95 / 0.71 |
+| **hybrid+rerank[voyage-4-lite]** | **0.94 / 0.92** | **1.00 / 0.83** | **0.97 / 0.87** |
+| hybrid+rewrite+rerank[voyage-4-lite] | 0.89 / 0.86 | 1.00 / 0.84 | 0.95 / 0.85 |
+| dense[qwen3-embedding-4b] | 0.83 / 0.74 | 0.82 / 0.52 | 0.82 / 0.62 |
+| hybrid[qwen3-embedding-4b] | 0.89 / 0.77 | 0.73 / 0.51 | 0.80 / 0.63 |
+| hybrid+rewrite[qwen3-embedding-4b] | 0.89 / 0.74 | 0.95 / 0.72 | 0.93 / 0.73 |
+| hybrid+rerank[qwen3-embedding-4b] | 0.94 / 0.92 | 0.91 / 0.81 | 0.93 / 0.86 |
+| hybrid+rewrite+rerank[qwen3-embedding-4b] | 0.94 / 0.92 | 1.00 / 0.84 | 0.97 / 0.88 |
+| dense[voyage-4-large] | 0.94 / 0.76 | 0.91 / 0.71 | 0.93 / 0.73 |
+| hybrid[voyage-4-large] | 0.94 / 0.80 | 0.91 / 0.58 | 0.93 / 0.68 |
+| hybrid+rewrite[voyage-4-large] | 0.94 / 0.73 | 0.91 / 0.71 | 0.93 / 0.72 |
+| hybrid+rerank[voyage-4-large] | 0.94 / 0.92 | 1.00 / 0.84 | 0.97 / 0.88 |
+| hybrid+rewrite+rerank[voyage-4-large] | 0.94 / 0.92 | 1.00 / 0.84 | 0.97 / 0.88 |
+
+**What the numbers say**
+1. **The bias caveat in section 2 was real.** BM25 drops from 0.89 on the page set to 0.50 on the scenario set. It missed 11 of 22 scenario questions, including "shiny bits in oil", "soft brake pedal" and "coin tap on composite".
+2. **Reranking is the fix that matters.** With voyage-4-lite, it lifts hybrid from 0.85 to 0.97 recall@5 (5 more questions) and MRR from 0.64 to 0.87, so the right passage usually comes first. Every embedder reaches 0.93–0.97 once reranked.
+3. **After reranking, the embedder barely matters.** voyage-4-large is clearly the best embedder on its own (dense 0.93 vs 0.78 for lite), but with rerank it ties lite at 0.97 and gains 0.01 MRR. It costs 6x more ($2.16 vs $0.36 per full corpus embed). The difference is one question at most, which this sample size can't separate.
+4. **Rewriting helps without a reranker and adds nothing with one.** Without rerank it lifts the scenario set a lot (lite hybrid 0.82 → 0.95), but with rerank it is neutral or one question worse. It also adds a chat call (p50 1.57 s) before retrieval can start.
+5. **One question still misses everywhere:** "Which NDI method uses a glowing dye under black light…". Phase 3 should check whether the label (expected page) is wrong or this is a real gap.
+
+**Small-sample warning.** At n=40, one question is 0.025, and nothing here was repeated or tested for significance. The rerank effect (+5 questions over hybrid, the same direction with all three embedders) is the only finding I'd call solid. The ranking between embedders after rerank is not. Phase 3's golden set (≥ 150 questions) has to confirm the choice.
+
+**Cost and latency per query** (from the ledger, `usage.cost` and wall clock):
+
+| Step | Cost | p50 / p95 latency |
+| --- | --- | --- |
+| Query embedding (voyage-4-lite) | ~$0.00004 | 0.93 / 1.03 s (from the laptop, 5 calls) |
+| Rerank top 50 (rerank-4-pro) | **$0.0025** | 0.87 / 1.27 s (240 calls) |
+| Rewrite (haiku-5.5), not adopted | ~$0.00007 | 1.57 / 1.97 s |
+| Corpus embedding, one full pass (~18M tokens) | lite $0.36 · qwen ~$0.37 · large $2.16 | lite p50 0.61 s per batch of 64 |
+
+**Decision → [ADR-0002](adr/0002-retrieval-stack.md):** hybrid (Postgres full-text + pgvector with `voyage-4-lite`) fused with RRF, then **`rerank-4-pro` on the top 50**, with no query rewriting by default. Rewrite stays available as a fallback for when the reranker is down, because that's where it helped.
+
 ## 3. Human-approval interrupt (`s3_interrupt.py`) VERIFIED
 
 LangGraph 1.2.18, `interrupt()` plus `Command(resume=...)`, with the `InMemorySaver` checkpointer. No LLM; the diagnosis is stubbed so the test only exercises the control flow.
@@ -110,17 +166,30 @@ Pinning: Phase 3 pins the upstream provider with `provider.order` plus `allow_fa
 
 About a third of the total was waste from the lost partial run. Resumable embedding is now built in. A few diagnostic probes run outside the scripts weren't logged. Their costs, as returned in `usage.cost`, total under $0.001. The $1.00 cap was never reached.
 
+**After the section 2b matrix (you raised the cap to $5): $3.7443 total.**
+
+| Item | Cost |
+| --- | --- |
+| Section 1 chat calls + section 2b rewrites | $0.0434 |
+| voyage-4-lite corpus (both runs, as above) | $0.5337 |
+| qwen3-embedding-4b corpus | $0.4091 |
+| voyage-4-large corpus | $2.1573 |
+| rerank-4-pro, 240 calls | $0.6000 |
+| Query embeddings | $0.0008 |
+
+That's $1.26 under the cap. Most of it (58 %) was voyage-4-large, which turned out not to be needed, but we only know that because we ran it.
+
 ## Exit gate status
 
 | Gate item | Status |
 | --- | --- |
-| `SCOPE.md` and `DATA.md` drafted | Done, **awaiting your approval** |
+| `SCOPE.md` and `DATA.md` drafted | Done. You said "go ahead" on 2026-10-29, which I took as approval. Say so if anything in them should change |
 | Spike: tool calling via OpenRouter | **Passed.** Two models at 16/16 |
 | Spike: approval interrupt | **Passed.** 7/7 |
-| Spike: retrieval returns the right passages | **Passed.** Hybrid and BM25 at 0.89 recall@5 over 49,871 chunks. Dense alone scored lower (0.78); see section 2 |
+| Spike: retrieval returns the right passages | **Passed.** Hybrid + rerank reaches 0.97 recall@5 / 0.87 MRR on 40 questions over 49,871 chunks, and 1.00 on the scenario set, where BM25 gets 0.50 (section 2b) |
 | Model shortlist | Done (section 5) |
 
 ## Open items for the gate
 
 - **Rotate the OpenRouter key.** It was pasted in chat and is still the active key.
-- Approve the domain switch and the two scope questions in `docs/SCOPE.md`.
+- The domain switch and the two scope questions in `docs/SCOPE.md` were taken as approved by "go ahead" (2026-10-29).
