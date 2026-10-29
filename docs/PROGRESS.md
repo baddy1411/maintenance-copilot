@@ -30,3 +30,28 @@ Carried forward:
 | Rotate the OpenRouter key | **Pending (yours)**, issue #1 | — |
 
 The two structural changes from the reviews: agent runs execute as worker jobs instead of inside the request (ADR-0004), and Redis is removed (ADR-0009).
+
+## Phase 2: Foundation. In progress
+
+| Slice | Issue | State | Evidence |
+| --- | --- | --- | --- |
+| Repo hygiene, CI | #2 | Done (`make up`/`make eval` come with #15 and Phase 3) | CI green on every push |
+| Schema, roles, `migrate` | #3 | Done | `tests/test_schema.py` |
+| LLM gateway | #4 | Done; live smoke test $0.00254 | `tests/test_llm_*.py` |
+| AD ingestion | #5 | Done; **full 2020–2026 backfill loaded locally** | `tests/test_ingest_*.py`, below |
+
+**Local corpus after the AD backfill (2026-10-29):**
+- 2,545 ADs (2020-01-06 to 2026-10-27): 11 corrections, 10 revisions, 376 marked superseded (all pointing to a newer AD).
+- 44,198 chunks, all embedded with voyage-4-lite. Average 1,405 characters, none over the 450-token cap.
+- 280 MB database.
+- The run took 33.5 min: 0 quarantined, 0 failed.
+
+**Model spend to date:**
+
+| Item | Cost |
+| --- | --- |
+| Phase 0 spikes | $3.7443 |
+| Gateway live smoke test | $0.0025 |
+| AD backfill | $0.3319 (estimate $0.35, cap $0.50) |
+| `embed-missing` for the 8 text-only ADs | $0.0011 |
+| **Total** | **≈ $4.08** |

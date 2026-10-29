@@ -42,6 +42,7 @@ async def _worker() -> None:
 
 def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    logging.getLogger("httpx2").setLevel(logging.WARNING)  # one INFO line per request drowns the job logs
     parser = argparse.ArgumentParser(prog="copilot")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("migrate", help="apply all database migrations (run before any service update)")

@@ -35,6 +35,7 @@ Totals for the spike: about **2,875 handbook pages + 2,553 ADs + 182,910 SDRs**.
 - **276 ADs (11 %) contain NUL and other control characters** in the govinfo HTML, as GPO formatting artifacts before separator lines. Postgres text can't store NUL, so they're stripped at extraction.
 - **2026 text indents section headers** (`\n\n (d) Subject`), unlike earlier years.
 - Re-measure after any parser change: `uv run python scripts/measure_ad_parse.py`.
+- **Full 2020–2026 load** (`copilot ingest-ads --since 2020-01-01`, 2026-10-29): 2,545 FR documents, 0 quarantined, 0 failed. 44,198 chunks and vectors, **$0.332 to embed**, 33.5 min (mostly govinfo fetches at the polite rate).
 
 ## Synthetic data (generated)
 
