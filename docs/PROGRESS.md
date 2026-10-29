@@ -18,6 +18,15 @@ Carried forward:
 - The NDI "glowing dye" question misses in every configuration. Check the label in Phase 3.
 - Postgres FTS vs `rank_bm25` parity (Phase 2).
 
-## Phase 1: Design. In progress
+## Phase 1: Design. At the gate, awaiting your approval
 
-Elephant draft in [DESIGN.md](DESIGN.md) and [ADRs](adr/). Goldfish reviews and the backlog follow; the gate needs your approval of `DESIGN.md`.
+| Gate item | Result | Evidence |
+| --- | --- | --- |
+| `DESIGN.md` with service-level targets | DRAFT v2 | [DESIGN](DESIGN.md) |
+| ADRs | 0001–0009 (queue, retrieval, PDF parser, agent execution, hosting, observability, evals, SQL tools, no Redis) | [adr/](adr/) |
+| Goldfish reviews | Three fresh-context reviews (security, cost and scale, operations): 36 findings. 31 accepted, 4 accepted with changes, 1 rejected. Each is logged with where it landed | [Review log](DESIGN.md#review-log) |
+| Backlog | 29 issues labelled `phase-1` … `phase-9` | [Issues](https://github.com/baddy1411/maintenance-copilot/issues) |
+| **Your approval of `DESIGN.md`** | **Pending** | — |
+| Rotate the OpenRouter key | **Pending (yours)**, issue #1 | — |
+
+The two structural changes from the reviews: agent runs execute as worker jobs instead of inside the request (ADR-0004), and Redis is removed (ADR-0009).
