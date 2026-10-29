@@ -25,5 +25,6 @@ Use **pypdfium2** for text with page numbers. Detect near-empty pages (under 50 
 - **Sandbox:** every PDF, official or uploaded, is parsed by `python -I -m app.ingest.pdf_worker` in its own process. Limits are set in the child before PDFium is imported: `RLIMIT_CPU` 300 s, `RLIMIT_AS` 2 GB (Linux only; macOS ignores it), `RLIMIT_FSIZE` 0, `RLIMIT_NOFILE` 64. The parent enforces a 600 s wall clock, a 300 MB size cap, the `%PDF-` magic bytes, ≤ 3,000 pages, and that the output matches the declared page count. Any failure means quarantine, never retry.
 - **Measured on the four FAA PDFs:** 2,875 pages in 8.7 s through the sandbox; 9 near-empty pages, the same as the spike.
 - **Page numbers:** the PDF index is kept for evals and deep links, and a printed `page_label` for citations. It comes from embedded PDF page labels (General and Powerplant, 100 %) or footer text (Airframe 96 %, AC 91 % of pages).
+- **Learned:** with equal soft and hard `RLIMIT_CPU`, Linux sends SIGKILL instead of SIGXCPU. macOS doesn't, so it only showed up in CI. The worker now uses soft N, hard N+5.
 - **Learned:** CPython ignores SIGXFSZ, so the file-size limit makes writes fail with EFBIG rather than killing the child. Nothing reaches the disk either way (tested).
 - Full details, tests and operations: `docs/ingestion.md` §5.

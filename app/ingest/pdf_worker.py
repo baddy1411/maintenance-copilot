@@ -3,7 +3,8 @@
 
 PDFium is native code parsing what may be attacker-supplied input (admin uploads; ADR-0003), so it runs in
 its own process with OS limits set before the file is opened:
-  RLIMIT_CPU    CPU seconds. Exceeding it kills the process with SIGXCPU.
+  RLIMIT_CPU    soft = N CPU seconds -> SIGXCPU, hard = N + 5 -> SIGKILL as a backstop. With soft == hard,
+                Linux sends SIGKILL straight away (seen in CI) and the cause can't be told apart from OOM.
   RLIMIT_AS     address space. Enforced on Linux (the container target). macOS ignores it, so local runs
                 rely on the parent's wall-clock timeout.
   RLIMIT_FSIZE  0. The parser has no reason to write files. CPython ignores SIGXFSZ, so a write fails with
@@ -17,16 +18,20 @@ import resource
 import sys
 
 
-def _limit(kind: int, value: int) -> None:
+def _limit(kind: int, value: int, hard: int | None = None) -> None:
     try:
-        resource.setrlimit(kind, (value, value))
+        resource.setrlimit(kind, (value, value if hard is None else hard))
     except (ValueError, OSError):
         pass  # not supported on this platform (e.g. RLIMIT_AS on macOS); the parent's timeout still applies
 
 
+def limit_cpu(seconds: int) -> None:
+    _limit(resource.RLIMIT_CPU, seconds, seconds + 5)
+
+
 def main() -> int:
     path, max_pages, cpu_s, mem_mb = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
-    _limit(resource.RLIMIT_CPU, cpu_s)
+    limit_cpu(cpu_s)
     _limit(resource.RLIMIT_AS, mem_mb * 1024 * 1024)
     _limit(resource.RLIMIT_FSIZE, 0)
     _limit(resource.RLIMIT_NOFILE, 64)

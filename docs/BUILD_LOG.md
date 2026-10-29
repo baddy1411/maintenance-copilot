@@ -124,6 +124,8 @@ Commits `ea60872`, `9dc3565` · 2026-10-29 · spend $0.333
    - large file reads and writes run off the event loop, which ruff's ASYNC240 flagged.
 6. Moved the run report, job cap and batch embedding into `common.py`, so both sources share one implementation.
 
+**Problem found by Linux CI** (it passed on macOS): the CPU-limit test got `SIGKILL`, not `SIGXCPU`. With equal soft and hard `RLIMIT_CPU`, Linux sends SIGKILL straight away, which looks the same as an OOM kill. Fix: soft limit N, hard N+5, so SIGXCPU arrives first and the hard limit stays as a backstop. The test also set its own limit instead of calling the worker's, so it now calls `limit_cpu()`. That's why the container target's CI matters even when local tests pass.
+
 **Problem found by tests:** the file-write limit doesn't kill the process. **CPython ignores SIGXFSZ**, so the write fails with EFBIG instead. The guard works (nothing reaches the disk), but the test was asserting the wrong mechanism, so it now checks errno 27 and an empty file.
 
 **Evidence**

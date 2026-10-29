@@ -74,7 +74,8 @@ async def test_crashing_parser_is_rejected(tmp_path: Path) -> None:
 
 async def test_cpu_limit_kills_a_spinning_parser(tmp_path: Path) -> None:
     pdf = write(tmp_path, make_pdf([["x"]]))
-    spin = "import resource; resource.setrlimit(resource.RLIMIT_CPU, (1, 1))\nwhile True: pass"
+    # The worker's own limit_cpu(): soft limit -> SIGXCPU on Linux and macOS alike.
+    spin = "from app.ingest.pdf_worker import limit_cpu; limit_cpu(1)\nwhile True: pass"
     with pytest.raises(PdfRejected, match="CPU limit"):
         await extract_pages(pdf, FAST, worker=[sys.executable, "-c", spin])
 

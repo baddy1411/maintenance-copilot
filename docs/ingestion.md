@@ -101,7 +101,7 @@ PDFium is native code. Admin uploads make it parse input we don't control, so te
 | --- | --- | --- | --- |
 | Before parsing | ≤ 300 MB, starts with `%PDF-` | parent | `test_rejects_non_pdf_by_magic_bytes`, `…_oversized_file…` |
 | Process | `python -I -m app.ingest.pdf_worker`: isolated mode, no user site-packages, no CWD on the path | parent | every PDF test runs through it |
-| CPU | `RLIMIT_CPU` 300 s → SIGXCPU | child, before PDFium is imported | `test_cpu_limit_kills_a_spinning_parser` |
+| CPU | `RLIMIT_CPU` soft 300 s → SIGXCPU, hard 305 s → SIGKILL as a backstop | child, before PDFium is imported. With soft == hard, Linux sends SIGKILL straight away, which can't be told apart from OOM (found in CI) | `test_cpu_limit_kills_a_spinning_parser`, on Linux and macOS |
 | Memory | `RLIMIT_AS` 2 GB | child. **Linux only**: macOS ignores it, so local runs rely on the wall clock | Linux CI |
 | Disk writes | `RLIMIT_FSIZE` 0 | child. CPython ignores SIGXFSZ, so writes fail with EFBIG (errno 27) | `test_worker_limits_block_file_writes` |
 | Open files | `RLIMIT_NOFILE` 64 | child | — |
