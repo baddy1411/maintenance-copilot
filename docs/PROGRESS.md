@@ -24,7 +24,7 @@ Carried forward:
 | --- | --- | --- |
 | `DESIGN.md` with service-level targets | DRAFT v2 | [DESIGN](DESIGN.md) |
 | ADRs | 0001–0009 (queue, retrieval, PDF parser, agent execution, hosting, observability, evals, SQL tools, no Redis) | [adr/](adr/) |
-| Goldfish reviews | Three fresh-context reviews (security, cost and scale, operations): 36 findings. 31 accepted, 4 accepted with changes, 1 rejected. Each is logged with where it landed | [Review log](DESIGN.md#review-log) |
+| Goldfish reviews | Three fresh-context reviews (security, cost and scale, operations): 36 findings. 31 accepted, 5 accepted with changes. One part of O9 was rejected: MCP stays a separate entrypoint. Each is logged with where it landed | [Review log](DESIGN.md#review-log) |
 | Backlog | 29 issues labelled `phase-1` … `phase-9` | [Issues](https://github.com/baddy1411/maintenance-copilot/issues) |
 | **Your approval of `DESIGN.md`** | **Pending** | — |
 | Rotate the OpenRouter key | **Pending (yours)**, issue #1 | — |
