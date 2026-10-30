@@ -162,7 +162,7 @@ async def test_unknown_model_fails_closed(gw: Gateway, fake: FakeOpenRouter) -> 
 
 async def test_embed_returns_vectors_in_input_order(gw: Gateway, fake: FakeOpenRouter, ledger: MemoryLedger) -> None:
     result = await gw.embed(CallContext(kind="embed_query"), ["first", "second", "email pat@example.com"])
-    assert result.vectors == [[0.0] * 3, [1.0] * 3, [2.0] * 3]
+    assert result.vectors == [[1.0] * 3, [2.0] * 3, [3.0] * 3]
     assert result.cost == 0.0000002
     body = fake.bodies("/embeddings")[0]
     assert body["input"][2] == "email [EMAIL]"

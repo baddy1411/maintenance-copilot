@@ -89,6 +89,9 @@ def main(argv: list[str] | None = None) -> None:
     emb.add_argument("--cap", type=float, default=1.00, help="hard dollar cap for this job")
 
     sub.add_parser("worker", help="run background jobs (ingestion, scheduled syncs)")
+    api = sub.add_parser("api", help="run the HTTP API")
+    api.add_argument("--host", default="127.0.0.1")
+    api.add_argument("--port", type=int, default=8000)
     args = parser.parse_args(argv)
 
     if args.command == "migrate":
@@ -105,6 +108,12 @@ def main(argv: list[str] | None = None) -> None:
         asyncio.run(_embed_missing(args))
     elif args.command == "worker":
         asyncio.run(_worker())
+    elif args.command == "api":
+        import uvicorn
+
+        from app.api.main import create_app
+
+        uvicorn.run(create_app(), host=args.host, port=args.port, log_level="info")
 
 
 if __name__ == "__main__":

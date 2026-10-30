@@ -13,10 +13,11 @@ Streaming answers are added by the Q&A slice (#9). This module is request/respon
 
 import json
 import time
-from collections.abc import Sequence
+from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 from typing import Any, TypeVar, cast
 
+import anyio
 import httpx2
 import openai
 from pydantic import BaseModel, ValidationError
@@ -46,6 +47,16 @@ MAX_TOKENS_CEILING = 8000
 @dataclass(frozen=True)
 class EmbedResult:
     vectors: list[list[float]]
+    cost: float
+
+
+@dataclass(frozen=True)
+class StreamEnd:
+    """The last item a stream yields: what finished it and what it cost."""
+
+    finish_reason: str | None
+    model: str
+    provider: str | None
     cost: float
 
 
@@ -182,6 +193,99 @@ class Gateway:
             raise ModelUnavailable(f"{primary} and fallback {fallback} failed: {exc}") from exc
         except FALLBACK_ON as exc:
             raise ModelUnavailable(f"{primary} and fallback {fallback} failed: {exc}") from exc
+
+    # ---- streaming ----------------------------------------------------------------------------------
+
+    async def _open_stream(
+        self, ctx: CallContext, model: str, messages: list[Message], max_tokens: int, params: dict[str, Any]
+    ) -> tuple[Any, float, float, float]:
+        """Spend check, then open the stream. Returns (stream, started, prompt-token estimate, completion price)."""
+        info = await self.catalog.get(model)
+        prompt_tokens = estimate_tokens(_chars(messages))
+        tier = info.price(prompt_tokens)
+        await self._check_spend(ctx, prompt_tokens * tier.prompt + max_tokens * tier.completion)
+        sent = {k: v for k, v in params.items() if k in info.supported}
+        body_params = {k: sent.pop(k) for k in ("reasoning",) if k in sent}
+        started = time.perf_counter()
+        try:
+            stream = await self.client.chat.completions.create(
+                model=model, messages=cast(Any, messages), max_tokens=max_tokens, stream=True,
+                extra_body={"provider": self._provider(), **body_params}, **sent,
+            )  # fmt: skip
+        except openai.APIError as exc:
+            await self._record(ctx, model, started, _status(exc))
+            raise
+        return stream, started, float(prompt_tokens * tier.prompt), tier.completion
+
+    async def _open_with_fallback(
+        self, ctx: CallContext, messages: list[Message], max_tokens: int, model: str | None, params: dict[str, Any]
+    ) -> tuple[Any, str, float, float, float]:
+        primary = model or self.s.chat_model
+        candidates = [primary] + ([self.s.fallback_model] if self.s.fallback_model not in (None, primary) else [])
+        last: Exception | None = None
+        for m in candidates:
+            try:
+                stream, started, prompt_cost, completion_price = await self._open_stream(ctx, m, messages, max_tokens,
+                                                                                         params)  # fmt: skip
+                return stream, m, started, prompt_cost, completion_price
+            except openai.APIStatusError as exc:
+                if exc.status_code == 402:
+                    raise CreditsExhausted(str(exc)) from exc
+                if not isinstance(exc, FALLBACK_ON):
+                    raise
+                last = exc
+            except FALLBACK_ON as exc:
+                last = exc
+        raise ModelUnavailable(f"{' and '.join(candidates)} failed: {last}") from last
+
+    async def stream_chat(
+        self, ctx: CallContext, messages: Sequence[Message], *, max_tokens: int, model: str | None = None,
+        **params: Any,
+    ) -> AsyncGenerator[str | StreamEnd]:  # fmt: skip
+        """Yield text deltas, then one StreamEnd. The fallback model is tried only if the primary fails before
+        the first token: text the user has already seen can't be swapped. A failure mid-stream raises
+        ModelUnavailable.
+
+        Cost: OpenRouter puts usage, including `cost`, in the last chunk (no stream_options needed, checked
+        2026-10-30). If the consumer stops early (client disconnect), the upstream stream is closed at once,
+        and the ledger gets an *estimated* cost (prompt estimate + streamed characters / 3 x completion
+        price), because a cut-off generation is still billed."""
+        safe = _redact_messages(messages)
+        stream, used, started, prompt_cost, completion_price = await self._open_with_fallback(
+            ctx, safe, max_tokens, model, params
+        )
+        streamed_chars, finished = 0, False
+        finish_reason: str | None = None
+        try:
+            async for chunk in stream:
+                for choice in chunk.choices:
+                    if choice.delta and choice.delta.content:
+                        streamed_chars += len(choice.delta.content)
+                        yield choice.delta.content
+                    if choice.finish_reason:
+                        finish_reason = choice.finish_reason
+                if chunk.usage is not None:
+                    u = chunk.usage.model_dump()
+                    cost = float(u.get("cost") or 0.0)
+                    provider = (chunk.model_extra or {}).get("provider")
+                    await self._record(
+                        ctx, used, started, "ok", cost=cost, provider=provider,
+                        prompt_tokens=u.get("prompt_tokens"), completion_tokens=u.get("completion_tokens"),
+                        cached_tokens=(u.get("prompt_tokens_details") or {}).get("cached_tokens"),
+                    )  # fmt: skip
+                    finished = True
+                    yield StreamEnd(finish_reason, used, provider, cost)
+        except openai.APIError as exc:
+            await self._record(ctx, used, started, _status(exc))
+            raise ModelUnavailable(f"{used} failed mid-stream: {exc}") from exc
+        finally:
+            if not finished:
+                # On a client disconnect this generator is being *cancelled*: an unshielded await here would
+                # be cancelled too, and neither the close nor the ledger row would happen.
+                with anyio.CancelScope(shield=True):
+                    await stream.close()
+                    estimate = prompt_cost + estimate_tokens(streamed_chars) * completion_price
+                    await self._record(ctx, used, started, "cancelled_estimated", cost=estimate)
 
     async def structured(
         self, ctx: CallContext, messages: Sequence[Message], schema: type[T], *, max_tokens: int = 2000,

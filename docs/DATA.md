@@ -42,6 +42,7 @@ Totals for the spike: about **2,875 handbook pages + 2,553 ADs + 182,910 SDRs**.
 - **Titles** come from each PDF's own metadata: FAA-H-8083-30B (General, 2023), FAA-H-8083-31B (Airframe, 2023), FAA-H-8083-32B (Powerplant, 2023), and AC 43.13-1B with Change 1 (9/8/98).
 - **Page numbers:** General and Powerplant embed PDF page labels (`10-25`, index pages `I-11`). Airframe and the AC don't, but print them in the text: the last token of the page (`8-6`), or the AC footer `Page 8-22 Par 8-37`. Labels were recovered for 100 / 100 / 96 / 91 % of pages.
 - **Private-use glyphs:** PDFium extracts symbol-font characters as private-use code points (`\uf8e7` in the AC's paragraph references). They're replaced with spaces.
+- **Hyphenation marks:** PDFium returns U+FFFE inside words split across lines (`ca\ufffeble`). It's in 76 % of AC chunks and 9 % of handbook chunks, and soft hyphens (U+00AD) appear as well. Both are removed to rejoin the words (PDF parser version 2, issue #9).
 - **Load (2026-10-29):** 4 PDFs, 2,875 pages, 9 near-empty (scanned figures, skipped), 8,935 chunks, $0.045 to embed. The full method is in `docs/ingestion.md`.
 
 ## Synthetic data (generated)

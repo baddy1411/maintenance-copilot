@@ -47,6 +47,29 @@ def completion(content: str, finish_reason: str = "stop", cost: float = 0.0004, 
     })  # fmt: skip
 
 
+def sse_completion(deltas: list[str], *, finish_reason: str = "stop", cost: float = 0.0006, model: str = HAIKU,
+                   provider: str = "Anthropic") -> httpx2.Response:  # fmt: skip
+    """A streamed completion in OpenRouter's wire format: processing comments, one chunk per delta, a final
+    chunk carrying finish_reason, then usage (with cost) in the last chunk, then [DONE]."""
+
+    def chunk(choices: list[dict[str, Any]], usage: dict[str, Any] | None = None) -> str:
+        body: dict[str, Any] = {"id": "gen-s", "object": "chat.completion.chunk", "created": 0, "model": model,
+                                "provider": provider, "choices": choices}  # fmt: skip
+        if usage:
+            body["usage"] = usage
+        return f"data: {json.dumps(body)}\n\n"
+
+    parts = [": OPENROUTER PROCESSING\n\n"]
+    parts += [
+        chunk([{"index": 0, "delta": {"role": "assistant", "content": d}, "finish_reason": None}]) for d in deltas
+    ]
+    parts.append(chunk([{"index": 0, "delta": {}, "finish_reason": finish_reason}]))
+    parts.append(chunk([], {"prompt_tokens": 2400, "completion_tokens": 180, "total_tokens": 2580, "cost": cost,
+                            "prompt_tokens_details": {"cached_tokens": 0}}))  # fmt: skip
+    parts.append("data: [DONE]\n\n")
+    return httpx2.Response(200, content="".join(parts).encode(), headers={"content-type": "text/event-stream"})
+
+
 def error(status: int, message: str, headers: dict[str, str] | None = None) -> httpx2.Response:
     return httpx2.Response(status, json={"error": {"code": status, "message": message}}, headers=headers)
 
@@ -56,6 +79,7 @@ class FakeOpenRouter:
     chat: deque[httpx2.Response] = field(default_factory=deque)
     rerank_responses: deque[httpx2.Response] = field(default_factory=deque)
     embed_dim: int = 3
+    rerank_top: float = 0.9  # when no scripted rerank response: score documents in order from this value down
     requests: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
     def bodies(self, path: str) -> list[dict[str, Any]]:
@@ -72,7 +96,8 @@ class FakeOpenRouter:
             return self.chat.popleft()
         if path == "/embeddings":
             # Out of order on purpose: the gateway must sort by index.
-            items = [{"object": "embedding", "index": i, "embedding": [float(i)] * self.embed_dim}
+            # Never a zero vector: it has no cosine direction (pgvector returns NaN distances for it).
+            items = [{"object": "embedding", "index": i, "embedding": [float(i + 1)] * self.embed_dim}
                      for i in reversed(range(len(body["input"])))]  # fmt: skip
             return httpx2.Response(
                 200,
@@ -84,7 +109,12 @@ class FakeOpenRouter:
                 },
             )
         if path == "/rerank":
-            return self.rerank_responses.popleft()
+            if self.rerank_responses:
+                return self.rerank_responses.popleft()
+            n = min(body.get("top_n") or len(body["documents"]), len(body["documents"]))
+            results = [{"index": i, "relevance_score": round(self.rerank_top - i * 0.01, 4)} for i in range(n)]
+            return httpx2.Response(200, json={"model": body["model"], "provider": "Cohere", "results": results,
+                                              "usage": {"cost": 0.0025}})  # fmt: skip
         raise AssertionError(f"unexpected {request.method} {path}")
 
     def client(self) -> httpx2.AsyncClient:

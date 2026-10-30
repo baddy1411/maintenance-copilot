@@ -125,3 +125,13 @@ def test_indented_section_headers_and_numeric_models() -> None:
     p = parse_ad(text, "Airworthiness Directives; MD Helicopters, LLC Helicopters", "2026-21664")
     assert p is not None and p.applicability and p.applicability.startswith("This AD applies to MD")
     assert p.models == ["369D", "369E", "500N"]
+
+
+def test_pdf_hyphenation_marks_are_removed_to_rejoin_words() -> None:
+    from app.ingest.text import clean
+
+    # Real AC 43.13-1B text: PDFium marks line-break hyphenation with U+FFFE inside the word.
+    assert clean("Replace any ca\ufffeble that has a popped core or loose strands re\ufffegardless of wear") == (
+        "Replace any cable that has a popped core or loose strands regardless of wear"
+    )
+    assert clean("certifi\u00adcation") == "certification"

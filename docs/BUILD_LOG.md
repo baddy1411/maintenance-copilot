@@ -186,3 +186,56 @@ Commits `ea60872`, `9dc3565` · 2026-10-29 · spend $0.333
 - Retrieval critical path p95 ≈ **1.8 s**, leaving about 1.2 s of the 3 s time-to-first-token target for the model.
 
 Full write-up: `docs/retrieval.md`.
+
+## Phase 2 · Slice 6: cited Q&A over SSE (#9)
+2026-10-30 · spend $0.20 (ledger)
+
+**Goal:** `POST /ask` streams an answer in which every claim points at a checked quote, refuses when it can't, and degrades instead of failing.
+
+**Steps**
+1. **Checked the APIs before writing code.**
+   - FastAPI 0.162 has native SSE (`fastapi.sse`), and its SSE route already sends `: ping` after 15 s of silence. That's DESIGN's heartbeat, so there's no custom timer.
+   - OpenRouter puts usage and cost in the last streamed chunk automatically; `stream_options` is deprecated.
+   - The openai SDK stream supports `aclose()`.
+   - **Both answer-model candidates reason at `medium` by default** (`/models` → `reasoning`).
+2. **`Gateway.stream_chat`.**
+   - Spend check before opening; fallback only before the first token.
+   - Real cost from the last chunk; an *estimated* cost when the stream is cut off, because that's billed too.
+   - Cleanup shielded from cancellation.
+   - Both generators wrapped in `aclosing`: leaving an `async for` because of cancellation doesn't close an async generator.
+3. **Answer design (`app/qa/answer.py`, `app/prompts/answer.md`).**
+   - Passages go in as escaped, provenance-tagged blocks.
+   - The model writes `[n]` markers, then `---SOURCES---` and `[n] "quote"` lines.
+   - A streaming splitter hides the sources block and the `NOT_FOUND` sentinel, even when they arrive split across tokens.
+   - Quotes are checked against their passage after normalising.
+   - The verdict follows DESIGN's 30 % rule.
+4. **Refusal threshold from measurements.** Answerable questions' top rerank score is at least 0.773; off-domain probes scored 0.26–0.42; an in-domain unanswerable ("Boeing 797" torque) scored 0.765, which no threshold can catch. Set to 0.5 (provisional).
+5. **API.** `create_app()` with a lifespan holding the pools, gateway and retriever. A dev principal stands in until #13 and is refused unless ENV is local or test. `copilot api` runs it.
+6. **Tests:**
+   - 26 answer and splitter tests, at every chunk size;
+   - 6 stream tests;
+   - 11 end-to-end API tests on real Postgres, with only OpenRouter faked: full event order, restricted scope, low relevance, NOT_FOUND, fabricated quotes, model down, validation, per-user ledger, dev-auth guard.
+7. **Mutation checks**, each confirmed to fail without the code it protects: the splitter hold-back (6 failures), the cancellation shield, the access scope.
+
+**What went wrong and was fixed along the way**
+- **My cancellation test passed with the shield removed.** anyio only cancels at awaits that suspend, and the in-memory ledger never suspended. It now uses a ledger that suspends, like Postgres, and fails without the shield.
+- **My TTFT script had two bugs.**
+  - It dropped the first token before checking citations.
+  - It reported "0 ms" for runs with *no* visible output.
+
+  Both are fixed. The second hid the finding that **Haiku at `medium` reasoning with 900 max tokens produced no text at all, 5 of 5 times.**
+- **Three of my five timing questions ran on degraded retrieval** (not cached, $0 cap). The script now asserts that retrieval isn't degraded.
+- **Refusals with reasoning off (~20–40 %) had three causes**, found by reading the refused answers:
+  1. **U+FFFE hyphenation marks in PDF text** (`ca￾ble`), in 76 % of AC chunks. The model's correct quote of "cable" couldn't match. Fixed in the cleaner, `PDF_PARSER_VERSION` 2, re-embedded for $0.045. Full-text recall@5 went 0.70 → 0.72 as a side effect.
+  2. **My own prompt** required a separate AD-caveat sentence, which then counted as unsupported. The caveat now goes inside the cited sentence.
+  3. Luna wrote uncited summary sentences, and Haiku gave a false `NOT_FOUND` on "magnetic plug" vs "chip detector". Two prompt rules fixed these: Haiku went from 8/10 to **10/10** answered.
+- **Re-ingesting the PDFs degraded HNSW recall** (8,935 dead rows, vector recall@5 0.80 → 0.75), and autovacuum's default 20 % threshold never fired. A manual VACUUM restored it; migration 0007 lowers the threshold to about 2 %.
+
+**Decisions:** Haiku 5.5 with reasoning `none` (first token p50 **0.60 s**). The model choice itself stays with Phase 3, since at n = 5 two runs ranked the models in opposite orders.
+
+**Live, end to end:**
+- First event 9 ms; first token 1.98 s; total 3.55 s.
+- Cites Powerplant Handbook p. 8-2, the spike's labelled page.
+- About $0.003 per question.
+
+Full write-up: `docs/qa.md`.

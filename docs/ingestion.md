@@ -123,12 +123,25 @@ A technician cites "Airframe Handbook p. 8-6", but the eval labels and `#page=N`
 
 The unlabelled pages are mostly front matter and appendices. Citations fall back to "PDF p. N" there.
 
+### 5.2b Hyphenation marks (found in #9, PDF parser version 2)
+PDFium returns **U+FFFE inside a word** where the PDF hyphenates it across a line (`ca\ufffeble`, `re\ufffegardless`). Soft hyphens (U+00AD) show up too. Left in, they split words for full-text search, embeddings and the answer step's quote checks: a correctly copied quote "cable … regardless" didn't match. Measured before the fix:
+
+| Source | Chunks affected | Occurrences |
+| --- | --- | --- |
+| AC 43.13-1B | 1,138 of 1,499 (76 %) | 6,412 |
+| Handbooks | 699 of 7,436 (9.4 %) | 764 |
+| ADs | 0 | 0 |
+
+`text.clean()` now removes both marks, joining the word, and `PDF_PARSER_VERSION` went to 2. The next `ingest-handbooks` re-processed and re-embedded all four PDFs for $0.045. ADs were unaffected, so they weren't re-embedded.
+
+**After a bulk re-ingest, vacuum.** Replacing 8,935 embedding rows degraded HNSW recall (0.996 → 0.988) until a `VACUUM`. Migration 0007 makes autovacuum trigger at about 2 % dead rows on `chunk_embeddings` (the default of 20 % never fired). Runbook: after a large re-embed, `VACUUM ANALYZE chunk_embeddings` as `migrator` to restore recall immediately.
+
 ### 5.3 Chunking decisions
 - **Chunks never span pages,** so each citation is exactly one page (as in the spike).
 - **Near-empty pages** (< 50 characters, scanned figures) are skipped: 9 of 2,875, the same 9 the spike found.
 - **No prefix on handbook chunks.** ADs get `[AD 2026-21-11: General Electric Company CF34-8C1, …]` because identifiers must survive chunking. Handbook chunks stay unprefixed, because the spike's 0.97 recall@5 was measured that way and #8 has to compare like with like. A "[title, p. 8-6]" prefix is logged as a Phase 3 experiment.
 - **Token cap 450**, estimated at 3.9 characters per token. The measured value on this corpus is 3.97: 71.4M characters over 17.98M voyage tokens. This is deliberately not the spend check's pessimistic chars / 3, which would have split most windows in half (DESIGN P2-12). The largest chunk is 1,755 characters, about 450 tokens.
-- **Private-use glyphs** (U+E000–U+F8FF, for example `` in the AC's paragraph references) are replaced with spaces. A check on the loaded ADs found 0 affected chunks, so no AD parser-version bump or re-embed was needed.
+- **Private-use glyphs** (U+E000–U+F8FF, for example `\uf8e7` in the AC's paragraph references) are replaced with spaces. A check on the loaded ADs found 0 affected chunks, so no AD parser-version bump or re-embed was needed.
 
 ### 5.4 Uploads
 `copilot ingest-pdf FILE --title … [--access public|restricted]`:

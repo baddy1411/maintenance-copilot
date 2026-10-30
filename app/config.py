@@ -73,6 +73,15 @@ class Settings(BaseSettings):
     pdf_mem_mb: int = 2_048
     pdf_wall_s: float = 600.0
 
+    # Cited Q&A (DESIGN §6.1, docs/qa.md).
+    answer_max_tokens: int = 900
+    # Both candidate models reason at "medium" by default, which delays the first visible token.
+    # Chosen from the TTFT measurement in docs/qa.md.
+    answer_reasoning_effort: str = "none"
+    # Refuse without calling the model below this top rerank score. Measured: answerable questions 0.773-0.99,
+    # off-domain 0.26-0.42, one in-domain unanswerable 0.765 (not caught). Provisional until Phase 3.
+    relevance_threshold: float = 0.5
+
     def config_version(self) -> str:
         """Hash of the effective runtime config, stamped on ledger rows and traces (DESIGN §7.4).
         Secrets and connection details are excluded: they don't change behaviour."""

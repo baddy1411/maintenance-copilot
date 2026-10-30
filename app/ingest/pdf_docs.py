@@ -39,7 +39,7 @@ from app.llm import Gateway
 
 logger = logging.getLogger(__name__)
 
-PDF_PARSER_VERSION = "1"
+PDF_PARSER_VERSION = "2"  # 2: hyphenation marks (U+FFFE, U+00AD) removed; see app/ingest/text.py
 NEAR_EMPTY_CHARS = 50  # scanned figure pages; 9 of 2,875 in the FAA set
 
 

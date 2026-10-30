@@ -117,6 +117,18 @@ Against the 3.0 s time-to-first-token target, that leaves about **1.2 s** for th
 
 Each mode has a test. None fails the request.
 
+## 5b. After the PDF text fix (#9)
+The answer step found U+FFFE hyphenation marks inside words in 76 % of AC chunks (`docs/qa.md` §5). After removing them, re-embedding the PDFs and vacuuming:
+
+| Variant | Before | After |
+| --- | --- | --- |
+| Full-text (OR + `ts_rank`) | 0.70 / 0.52 | **0.72 / 0.55** (scenario 0.59 → 0.68) |
+| Vector (ef 400) | 0.80 / 0.69 | 0.80 / 0.69 |
+| Hybrid RRF (the fallback) | 0.80 / 0.67 | 0.80 / 0.67 |
+| **Hybrid + rerank** | 0.97 / 0.86 | **0.97 / 0.87** |
+
+Before the vacuum, vector-only had dropped to 0.75: the re-ingest left 8,935 dead HNSW entries and autovacuum hadn't run. Migration 0007 fixes that (DESIGN P2-25).
+
 ## 6. Spend
 
 Evaluation: **$0.20** uncached (40 query embeddings, 80 rerank calls across variants). Cached in `data/eval/cache.json`, so re-runs are free unless the candidate sets change.
