@@ -138,3 +138,51 @@ Commits `ea60872`, `9dc3565` · 2026-10-29 · spend $0.333
 - **Sanity check** through the agent's read-only role: "chip detector metal particles oil" ranks Powerplant PDF p. 329 (printed 8-2) second on full-text search alone. That's the expected page for the scenario question.
 
 **Corpus now:** 2,549 documents, 53,133 chunks, all embedded, 327 MB. Model spend for the whole project: about $4.12.
+
+## Phase 2 · Slice 5: hybrid retrieval in Postgres (#8)
+2026-10-30 · spend $0.20 (evaluation)
+
+**Goal:** the production version of the spike's best retrieval (full-text + vectors + RRF + rerank) in Postgres, proven to match the spike's numbers.
+
+**Steps**
+1. Checked that all 19 documents the 40 spike questions point at are in the database, so the question sets can be re-run unchanged.
+2. **Vector index.** Migration 0006 builds a partial HNSW index for voyage-4-lite (`halfvec_cosine_ops`, `CONCURRENTLY`, in Alembic's autocommit block): about 12 s, 138 MB.
+   - Decision: the model name goes into queries as a validated **literal**. Postgres can't prove a partial-index predicate from a bind parameter under a generic plan.
+   - A test shows the index used with the literal and not with a parameter.
+3. **Query plans before code.**
+   - `EXPLAIN ANALYZE` as `tools_ro` showed the vector query using the partial index through the view, with the access filter on the join: 15 ms.
+   - It showed the OR full-text query matching **16,235 chunks (31 %)** for a plain-language question, sequentially scanned: 293 ms with `ts_rank_cd`, 90 ms with `ts_rank`. That confirmed the cost review's finding C10.
+4. **Built `app/retrieval/search.py`.**
+   - Full-text (three modes, for the experiment) and the embedding call run concurrently.
+   - Vector query, RRF, optional supersession demotion, rerank with a timeout.
+   - Degraded modes for every external failure.
+   - Access control inside both SQL queries.
+5. **Tests** with seeded data and a stub gateway that records what would leave the system. They cover:
+   - fusion maths;
+   - restricted text never returned and never sent to the reranker;
+   - demotion;
+   - rerank order and its fallback, embedding fallback, missing-index fallback;
+   - AND-first mode;
+   - partial-index usability.
+6. **The evaluation harness** (`scripts/eval_retrieval.py`) re-runs the spike's questions through the real code, caches paid calls (rerank keyed on the candidate *set*), and caps uncached spend.
+
+**What the evaluation found**
+- **A bug: per-call config ignored the full-text mode.** Three hybrid variants scored identically even though their full-text halves differ hugely (0.70 vs 0.38). That was the clue. Fixed.
+  - The first regression test *passed with the bug put back*, because on the small seeded data both modes return the same order. It was rewritten to record the mode the full-text stage receives, and now fails with the bug and passes without it.
+- **Full-text:** OR + `ts_rank` 0.70 vs BM25's 0.68, so the "FTS isn't BM25" risk is resolved. `ts_rank_cd` 0.38. AND-first adds nothing (P2-17).
+- **The vector side was losing documents to HNSW approximation.**
+  - The fallback scored 0.75 against the spike's 0.85, and a per-question diff showed vector search missing AD chunks the spike's exact search found.
+  - Measured against an exact scan: `ef_search` 100 returned 95.1 % of the true top 50, with the worst query at 60 %. At 400: 99.6 % for about 2 ms.
+  - Set per query with `SET LOCAL`, with a test that it applies and doesn't leak to the pool (P2-18). Vector recall@5 went 0.75 → 0.80.
+  - *My first measurement was wrong.* It reported 1.000 at every setting because psycopg had auto-prepared the statement under `enable_indexscan = off`, and the cached plan survived the `RESET`. The flat 67 ms timings gave it away. Re-measured on separate connections, with no prepared statements and an `EXPLAIN` assertion.
+- **Supersession demotion** had no recall effect, slightly lower MRR, and no effect with rerank, so it's off by default (P2-19).
+- **The fallback is 0.80, not 0.85.** In every miss the target was a candidate at fused rank 6–10: RRF rewards appearing in both lists over ranking first in one. Rerank recovers them all. The design now states the real number (P2-20).
+
+**Results (40 questions):** hybrid + rerank **0.97 recall@5 / 0.86 MRR** (spike 0.97 / 0.87), scenario set 1.00.
+
+**Latency (laptop):**
+- Full-text p95 112 ms, hidden behind the embedding call (p95 656 ms).
+- Vector p95 8 ms; rerank p95 0.94–1.22 s.
+- Retrieval critical path p95 ≈ **1.8 s**, leaving about 1.2 s of the 3 s time-to-first-token target for the model.
+
+Full write-up: `docs/retrieval.md`.

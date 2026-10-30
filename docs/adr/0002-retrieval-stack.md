@@ -1,6 +1,6 @@
 # ADR-0002: Hybrid retrieval in Postgres, with API embeddings and a reranker
 
-Status: Proposed · 2026-10-29 · revised in DESIGN v2 (cost review C1 and C4, ops review O4). The numbers come from `docs/SPIKE.md` §2 and §2b and are re-confirmed on the Phase 3 golden set.
+Status: **Accepted** · 2026-10-30, implemented in #8 · revised in DESIGN v2 (cost review C1 and C4, ops review O4). The numbers come from `docs/SPIKE.md` §2 and §2b and are re-confirmed on the Phase 3 golden set.
 
 ## Context
 The corpus has 49,871 chunks in the spike and will grow to about 200k with the full AD history. Users ask in plain technician language ("shiny bits in oil"), but the sources use formal terms ("metal particles, chip detector") and exact identifiers (AD numbers, part numbers, models). We need recall@5 ≥ 0.85 within a p95 time to first token of 3 s and a mean cost of ≤ $0.01 per Q&A. There is one datastore (Postgres) and no GPU.
@@ -38,3 +38,11 @@ The corpus has 49,871 chunks in the spike and will grow to about 200k with the f
 - Phase 2 must re-run both spike question sets against the Postgres implementation. If FTS-side recall drops noticeably from the `rank_bm25` numbers, look at a BM25 extension supported on RDS, or BM25 computed in the app.
 - The choice of lite over large rests on a single-question difference at n=40. Phase 3 re-runs the comparison on ≥ 150 questions. Switching embedders is a re-embed job (~$0.36 for lite or ~$2.16 for large per spike-size corpus, more for full history), not a schema change, as long as the dimension stays at 1024.
 - A self-hosted reranker (for example bge-reranker on CPU) is the fallback if API rerank cost or latency becomes a problem. Not measured yet (UNVERIFIED).
+
+## Implementation results (issue #8)
+Re-running the spike's 40 questions on the Postgres implementation (`docs/retrieval.md`):
+- **Hybrid + rerank: 0.97 recall@5 / 0.86 MRR** (spike 0.97 / 0.87); scenario set 1.00. The decision holds.
+- Full-text: OR + `ts_rank` 0.70 (BM25 0.68), so the risk that Postgres FTS isn't BM25 is resolved. `ts_rank_cd` 0.38.
+- HNSW needed `ef_search` 400. At 100 it returned only 95.1 % of the exact top 50.
+- The RRF-order fallback is 0.80, not 0.85. Supersession demotion is off (no measured benefit).
+- HNSW index: about 12 s to build, 138 MB at 53k vectors. Retrieval critical path p95 ≈ 1.8 s from a laptop.

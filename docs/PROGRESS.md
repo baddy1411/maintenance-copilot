@@ -40,8 +40,9 @@ The two structural changes from the reviews: agent runs execute as worker jobs i
 | LLM gateway | #4 | Done; live smoke test $0.00254 | `tests/test_llm_*.py` |
 | AD ingestion | #5 | Done; **full 2020–2026 backfill loaded locally** | `tests/test_ingest_*.py`, below |
 | Handbooks, AC, sandboxed uploads | #7 | Done; **all 4 PDFs loaded locally** | `tests/test_pdf.py`, `tests/test_ingest_pdfs.py` |
+| Hybrid retrieval | #8 | Done; **0.97 recall@5 / 0.86 MRR on Postgres** (spike 0.97 / 0.87) | `tests/test_retrieval.py`, [retrieval.md](retrieval.md) |
 
-How each slice was built, step by step: [BUILD_LOG.md](BUILD_LOG.md). The ingestion design in detail: [ingestion.md](ingestion.md).
+How each slice was built, step by step: [BUILD_LOG.md](BUILD_LOG.md). The ingestion design in detail: [ingestion.md](ingestion.md). Retrieval in detail: [retrieval.md](retrieval.md).
 
 **Local corpus (2026-10-29):** 2,549 documents, **53,133 chunks, all embedded**, 327 MB. ADs are broken down below; the handbooks and AC add 2,875 pages and 8,935 chunks.
 
@@ -60,4 +61,5 @@ AD backfill:
 | AD backfill | $0.3319 (estimate $0.35, cap $0.50) |
 | `embed-missing` for the 8 text-only ADs | $0.0011 |
 | Handbooks and AC embedding | $0.0454 (estimate $0.052, cap $0.10) |
-| **Total** | **≈ $4.12** |
+| Retrieval evaluation (#8) | $0.20 (cap $0.50) |
+| **Total** | **≈ $4.32** |

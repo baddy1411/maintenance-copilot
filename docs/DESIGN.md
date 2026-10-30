@@ -161,7 +161,7 @@ sequenceDiagram
     and
         A->>R: FTS top-50 (bounded candidates, §8)
     end
-    A->>R: vector top-50 (partial index, ef_search 100, access filter in SQL)
+    A->>R: vector top-50 (partial index, ef_search 400, access filter in SQL)
     A->>A: RRF, then demote superseded ADs
     A->>L: rerank top-50 (1.5 s timeout)
     A->>A: release DB connection
@@ -172,7 +172,7 @@ sequenceDiagram
 ```
 
 Failure handling:
-- **Reranker fails or times out (1.5 s):** use the **RRF order immediately**, which scored 0.85 recall in the spike and adds no extra round trip, and flag the response "degraded". The rewrite fallback is used **only on the agent path**, where TTFT doesn't apply (§8).
+- **Reranker fails or times out (1.5 s):** use the **RRF order immediately**, which scored **0.80** recall@5 on Postgres (0.85 in the spike; see `docs/retrieval.md` §3.6) and adds no extra round trip, and flag the response "degraded". The rewrite fallback is used **only on the agent path**, where TTFT doesn't apply (§8).
 - **Embedding API down:** FTS only, with the "degraded" flag.
 - **Model fails:** retry once on the fallback model. If that also fails, return the retrieved passages with citations and "generation unavailable".
 - **A citation fails validation:** strip it and mark the sentence unsupported. If more than 30 % of sentences are unsupported, refuse.
@@ -375,11 +375,11 @@ From the experiment matrix in `SPIKE.md` §2b (40 questions, 49,871 chunks). The
 | Setting | Value | Evidence |
 | --- | --- | --- |
 | Chunking | 220 words with 40 overlap (about 361 tokens; hard cap 450), AD chunks prefixed with the title | Spike §2. The 450-token cap keeps each document within one rerank unit (ASSUMED ≤ 500 tokens, re-checked) |
-| Keyword side | Postgres FTS, top 50, bounded candidates (§7.5) | Stands in for spike BM25. Parity is checked in Phase 2 (§9) |
+| Keyword side | Postgres FTS: OR query ranked by `ts_rank`, top 50 | **Measured parity with BM25**: 0.70 vs 0.68 recall@5. `ts_rank_cd` scored 0.38 and AND-then-OR added nothing (change P2-17) |
 | Embedder | `voyageai/voyage-4-lite`, stored as `halfvec(1024)`, cosine | Ties `voyage-4-large` once reranked, at 1/6 of the corpus cost. halfvec makes the index about 0.6 GB at 200k chunks instead of about 1.6 GB (ASSUMED from pgvector's page layout) |
-| Vector search | partial HNSW per model, `ef_search` = 100, iterative scan | The default `ef_search` of 40 would cut top-50 down to 40 |
+| Vector search | partial HNSW per model, **`ef_search` = 400** (set per query), iterative scan | At 100, HNSW returned 95.1 % of the exact top 50 (worst query 60 %). 400 gives 99.6 % for about +2 ms (change P2-18) |
 | Fusion | RRF k=60 | Spike default, not tuned |
-| Reranker | `cohere/rerank-4-pro` on the fused top 50, using the original question, **1.5 s timeout → RRF order** | Hybrid 0.85 → **0.97** recall@5, MRR 0.64 → 0.87 |
+| Reranker | `cohere/rerank-4-pro` on the fused top 50, using the original question, **1.5 s timeout → RRF order** | Postgres: hybrid 0.80 → **0.97** recall@5, MRR 0.67 → **0.86** (spike: 0.85 → 0.97, 0.64 → 0.87) |
 | Query rewrite | **Off for Q&A.** Used on the agent path when rerank fails | Neutral with rerank, +0.10 recall without it |
 | Context k | 5, or 8 when the question names an AD or a model | k=8 is UNVERIFIED |
 
@@ -387,12 +387,12 @@ From the experiment matrix in `SPIKE.md` §2b (40 questions, 49,871 chunks). The
 
 | Step | Cost | p50 / p95 |
 | --- | --- | --- |
-| Query embedding | ~$0.00004 | 0.93 / 1.03 s |
-| FTS, vector and RRF | $0 | UNVERIFIED, target ≤ 150 ms at 200k chunks |
-| Rerank | $0.0025 per search | 0.87 / 1.27 s |
+| Query embedding | ~$0.00004 | 0.35 / 0.66 s (n = 40, 2026-10-30; was 0.93 / 1.03 in the spike) |
+| FTS (concurrent with embedding), vector, fetch | $0 | FTS 52 / 112 ms; vector 6 / 8 ms; fetch 2 ms at 53k chunks. 200k is UNVERIFIED |
+| Rerank | $0.0025 per search | ~0.72 / 0.94–1.22 s (n = 80) |
 | Answer model TTFT | — | **UNVERIFIED**, about 0.6–1.2 s (ASSUMED) |
 
-The p95s add up to about 3.0–3.6 s against the 3.0 s TTFT target. **Phase 2 measures in-region TTFT for both shortlisted models.** The levers, in order:
+Measured retrieval critical path p95 ≈ **1.8 s** (FTS hides behind the embedding call), leaving about 1.2 s for the model's first token within the 3.0 s target (`docs/retrieval.md` §4). The design estimate was 3.0–3.6 s in total. **Phase 2 measures in-region TTFT for both shortlisted models.** The levers, in order:
 1. Cache query embeddings on the normalised question.
 2. Skip rerank when FTS top-1 is an exact AD-number or part-number match.
 3. Stream with minimal reasoning effort.
@@ -415,7 +415,7 @@ The target is relaxed only after all four have been tried, and the change is log
 
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
-| Postgres FTS (`ts_rank_cd`) isn't BM25, and OR queries scan large match sets | Recall or latency drops | Phase 2: re-run both spike question sets on Postgres and benchmark p95 at 200k chunks. Fallback: BM25 computed in the app over the bounded candidates, or an extension that RDS supports |
+| ~~Postgres FTS isn't BM25~~ **Resolved (#8):** `ts_rank` OR is at parity (0.70 vs 0.68). Remaining: broad OR queries match up to 31 % of chunks, so ranking cost grows with the corpus | Latency at 200k chunks | FTS runs concurrently with the embedding call, so it's free until it exceeds it (0.66 s p95). Measure in the Phase 8 load test; fallback: BM25 in the app over capped candidates |
 | TTFT target missed (§8) | SLO breach | Levers in §8, measured in Phase 2 |
 | Indirect prompt injection through ADs, SDR text or uploads | A wrong draft gets approved | §7.2 boundaries, draft code checks, the approval UI shows citations next to the draft, Phase 5 red team |
 | Data source access changes | Ingestion fails | Validation, quarantine, freshness SLI at 20 h, nightly live contract job |
@@ -520,4 +520,8 @@ Logged as they're made, each with its reason.
 | P2-14 | 2026-10-29 | Official PDFs go through the same sandbox as uploads | One code path, so the sandbox runs on every handbook load, not only on rare uploads. Costs about 9 s for all 2,875 pages |
 | P2-15 | 2026-10-29 | No chunk prefix on handbook and AC chunks (ADs keep theirs) | The spike's 0.97 recall@5 was measured without one, and #8 must compare Postgres retrieval with the spike like for like. A "[title, p. 8-6]" prefix is a Phase 3 experiment |
 | P2-16 | 2026-10-29 | Corpus loads are split into text first (`--no-embed`), then `embed-missing --cap` | The cost can be measured from real character counts before money is spent (handbooks: estimate $0.052, actual $0.045). It's also the backfill path for an embedder change (§8.1) |
+| P2-17 | 2026-10-30 | Full-text ranking is an **OR query ranked by `ts_rank`**. Not `ts_rank_cd`, and no AND-first step | Measured on the 40 spike questions: `ts_rank` 0.70 recall@5 (BM25 0.68), `ts_rank_cd` 0.38 and 3x slower, AND-then-OR identical quality with two queries. Closes the §9 "FTS isn't BM25" risk |
+| P2-18 | 2026-10-30 | `hnsw.ef_search` = **400**, set per query with `SET LOCAL` (was 100 on the role) | Against an exact scan, 100 returned 95.1 % of the true top 50 (worst query 60 %). 400 returns 99.6 % (worst 92 %) for about 2 ms. Vector recall@5 went 0.75 → 0.80 and hybrid 0.75 → 0.80 |
+| P2-19 | 2026-10-30 | Supersession demotion **off** by default (factor 1.0, mechanism kept) | No recall effect, slightly lower MRR (0.64 vs 0.67), and no effect at all with rerank. Superseded ADs are still returned with `superseded_by`; the answer step must state it. Retest in Phase 3 with supersession questions |
+| P2-20 | 2026-10-30 | The RRF-order fallback is **0.80** recall@5, not the spike's 0.85 | RRF (k=60) rewards appearing in both lists over ranking first in one, and AD chunking changed since the spike. In each missed case the target was a candidate at fused rank 6–10, and rerank recovers them all (`docs/retrieval.md` §3.6) |
 
