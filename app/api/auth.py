@@ -3,7 +3,7 @@
 anywhere else (DESIGN §7.3, security review S9)."""
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import Header
 
@@ -30,6 +30,15 @@ def check_dev_auth_allowed(settings: Settings) -> None:
         raise DevAuthNotAllowed(f"dev principal is not allowed with ENV={settings.env}; JWT auth comes with #13")
 
 
-async def dev_principal(x_dev_user: str = Header(default="dev-user", max_length=64)) -> Principal:
-    """Local only. The user id feeds per-user spend limits and the ledger's salted user hash."""
-    return Principal(user_id=x_dev_user, role="technician", access_levels=("public",))
+async def dev_principal(
+    x_dev_user: Annotated[str, Header(max_length=64)] = "dev-user",
+    x_dev_role: Annotated[Role, Header()] = "technician",
+) -> Principal:
+    """Local only. The user id feeds per-user spend limits, the ledger's salted user hash, run ownership and
+    the approver identity. The role decides who may decide on runs (DESIGN §6.3). With JWT (#13), both come
+    from the verified token and nothing from headers."""
+    return Principal(user_id=x_dev_user, role=x_dev_role, access_levels=("public",))
+
+
+def can_decide(p: Principal) -> bool:
+    return p.role in ("supervisor", "admin")

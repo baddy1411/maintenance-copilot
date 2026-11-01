@@ -2,7 +2,8 @@
 
 Queues:
   default  ingestion (sync_ads every 6 h)
-  agent    agent runs (ADR-0004); reap_runs every 5 min re-enqueues runs whose worker died
+  agent    agent runs (ADR-0004); reap_runs every 5 min re-enqueues runs whose worker died;
+           expire_approvals daily at 03:30 UTC
 """
 
 import logging
@@ -11,7 +12,7 @@ from uuid import UUID
 import procrastinate
 from procrastinate.exceptions import AlreadyEnqueued
 
-from app.agent.runner import RunDeps, emit, execute_run, fail, stale_runs
+from app.agent.runner import RunDeps, emit, execute_run, expire_approvals, fail, stale_runs
 from app.config import Role, Settings
 from app.ingest.ads import sync_ads
 from app.resources import ingest_resources
@@ -80,5 +81,11 @@ def make_app(settings: Settings, role: Role = "ingest_rw") -> procrastinate.App:
     @app.task(name="reap_runs", queue="agent", queueing_lock="reap_runs")
     async def reap_runs_task(timestamp: int) -> None:
         logger.info("reap_runs: %s", await reap(app, runtime()))
+
+    @app.periodic(cron="30 3 * * *", periodic_id="expire_approvals")
+    @app.task(name="expire_approvals", queue="agent", queueing_lock="expire_approvals")
+    async def expire_approvals_task(timestamp: int) -> None:
+        expired = await expire_approvals(runtime().rw_pool)
+        logger.info("expire_approvals: %d run(s) expired", len(expired))
 
     return app

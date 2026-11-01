@@ -93,3 +93,8 @@ def run_row(db: Settings, run_id: UUID) -> dict[str, Any]:
 
 def as_json(obj: Any) -> str:
     return json.dumps(obj)
+
+
+def clear_approval_tables(db: Settings) -> None:
+    with psycopg.connect(db.dsn("migrator"), autocommit=True) as conn:
+        conn.execute("TRUNCATE work_orders, approvals, audit_log, procrastinate_jobs CASCADE")

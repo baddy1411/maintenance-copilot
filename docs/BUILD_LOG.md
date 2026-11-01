@@ -293,3 +293,39 @@ Full write-up: `docs/qa.md`.
 - Diagnose and draft together take about 18 s.
 
 Full write-up: `docs/agent-runs.md`.
+
+## Phase 2 · Slice 8: approvals and the work-order write (#12)
+2026-11-01/02 · spend $0.00 (no model calls)
+
+**Goal:** a supervisor's decision turns a paused run into exactly one work order, or nothing, and nothing else can create one.
+
+**Steps**
+1. **Re-read DESIGN §6.3 and listed every guarantee.** Each one went into the table in `approvals.md` §1, and most are checked in two or three places (endpoint, write node, database constraint).
+2. **Hash-chained audit log** (`app/audit.py`): it appends inside the caller's transaction, and `verify()` finds the first broken row.
+   - **Caught my own bug before testing:** Postgres returns `timestamptz` in the session's time zone, so hashing `ts.isoformat()` would fail verification from another zone. Hashes now use UTC.
+3. **Write and reject** (`app/agent/approval.py`): one transaction re-reads the approvals row `FOR UPDATE`, checks action, hash and approver-is-not-creator, inserts the work order idempotently, appends the audit entry, and sets the status.
+4. **Graph v2:** `approval → write | reject`. Routing only; both nodes re-check the row. Serves v1 too, because the change is after the interrupt (P2-33).
+5. **Runner:** claims `decided` runs; resumes with `Command(resume=…)` built from the approvals row; re-pauses if there's no row; returns the status the node committed. `ApprovalInvalid` fails the run.
+6. **API:**
+   - `POST /runs/{id}/decision` (supervisors): row lock, all checks, compare-and-set, approvals row, audit, event; then enqueue.
+   - `GET /approvals`.
+   - Supervisors can read any run. The dev principal takes `X-Dev-Role` (P2-38).
+7. **`expire_approvals`** daily; **`copilot check-deploy [--expire]`** for the §6.3.1 pre-deploy gate.
+8. **Tests:**
+   - 6 audit tests;
+   - **15 property tests**: every combination, plus a forged resume, plus the graph structure;
+   - 17 decision and end-to-end tests;
+   - 1 stream regression.
+
+**What went wrong and was fixed**
+- **A vacuous assertion:** a test ended with `assert json.dumps(...)`, which is always true. It now checks that the hash a supervisor quotes is the hash of exactly the draft they were shown.
+- **A stream race, found live:** the approve stream ended before the `written` event, because the write node commits the status a moment before the runner records its final events. Streams now end on the event log (P2-37). The regression test reproduces the race and failed before the fix.
+
+**Mutation checks**, each confirmed to fail without the code it protects:
+- the write node's hash check: exactly the 3 cases where it's the only defence fail;
+- the audit advisory lock: the chain forked in 5 of 5 runs;
+- the UTC normalisation: verification fails from another time zone.
+
+**Live:** the two real v1 runs from #10, decided under v2 by `sup-anna`. MX-001 approved → work order written (created by `badrish-demo`, approved by `sup-anna`). MX-007 rejected with a reason → no work order. A second approval of MX-001 → 409. The 4-entry audit chain verified intact.
+
+Full write-up: `docs/approvals.md`.

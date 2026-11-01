@@ -1,6 +1,6 @@
 """The troubleshooting graph (DESIGN §6.3, docs/AGENT.md, docs/agent-runs.md):
 
-    act ⇄ tools → diagnose → draft → approval (interrupt) → END
+    act ⇄ tools → diagnose → draft → approval (interrupt) → write | reject → END
 
 `act` both plans and picks tools. AGENT.md had a separate `plan` LLM step, which would add a call and about
 1-2 s without new information (docs/agent-runs.md §3.1). The step cap counts act → tools cycles.
@@ -10,7 +10,9 @@ arbitrary types) and survive deploys as long as fields are only added (DESIGN §
 app/agent/schemas.py validate at each node. Every node returns an `event` that the runner records as a
 run_event for the client.
 
-Writing the work order happens after approval and belongs to #12, so the graph ends at the approval interrupt.
+After the interrupt, the decision only chooses the branch. `write` and `reject` re-read the `approvals` row
+and check it against the run and this checkpoint's draft hash, in the same transaction as their writes
+(app/agent/approval.py). A forged resume value can't produce a work order (tests/test_approval_property.py).
 """
 
 import hashlib
@@ -23,14 +25,19 @@ from typing import Any, Literal, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
+from psycopg_pool import AsyncConnectionPool
 
+from app.agent.approval import reject_run, write_work_order
 from app.agent.schemas import PRIORITY_ORDER, Citation, Diagnosis, WorkOrderDraft
 from app.agent.tools import TOOL_SPECS, Tools
 from app.config import Settings
 from app.llm import CallContext, Gateway
 from app.qa.answer import normalise
 
-GRAPH_VERSION = "1"  # bump on any change to nodes or edges (DESIGN §6.3.1)
+GRAPH_VERSION = "2"  # bump on any change to nodes or edges (DESIGN §6.3.1)
+# Versions this code can resume. v1 ended at approval -> END; v2 adds write/reject *after* the interrupt, so a
+# v1 run paused at `approval` resumes correctly here: nodes up to the interrupt are unchanged (DESIGN P2-33).
+SERVED_GRAPH_VERSIONS = frozenset({"1", "2"})
 STATE_SCHEMA_VERSION = 1  # bump on any non-additive change to AgentState
 PROMPTS = {n: (Path(__file__).resolve().parent.parent / "prompts" / f"agent_{n}.md").read_text()
            for n in ("act", "diagnose", "draft")}  # fmt: skip
@@ -53,6 +60,7 @@ class AgentState(TypedDict, total=False):
     draft: dict[str, Any] | None
     draft_sha256: str | None
     decision: dict[str, Any] | None
+    work_order_id: str | None
     event: dict[str, Any]  # what the last node did, for run_events
 
 
@@ -61,6 +69,7 @@ class AgentDeps:
     settings: Settings
     gateway: Gateway
     tools: Tools
+    rw: AsyncConnectionPool  # app_rw: the write and reject nodes
 
 
 def draft_sha256(draft: dict[str, Any]) -> str:
@@ -205,16 +214,37 @@ def build_graph(deps: AgentDeps, checkpointer: Any) -> CompiledStateGraph[AgentS
         )
         return {"decision": decision, "event": {"kind": "decision", "decision": decision}}
 
+    def after_approval(state: AgentState) -> Literal["write", "reject"]:
+        # Routing only. Both nodes re-check the approvals row, so a wrong or forged action here can't
+        # cause a write (approval.py raises ApprovalInvalid).
+        return "reject" if (state.get("decision") or {}).get("action") == "reject" else "write"
+
+    async def write(state: AgentState) -> AgentState:
+        from uuid import UUID
+
+        wo_id, new = await write_work_order(deps.rw, UUID(state["run_id"]), dict(state))
+        return {"work_order_id": str(wo_id), "event": {"kind": "written", "work_order_id": str(wo_id), "new": new}}
+
+    async def reject(state: AgentState) -> AgentState:
+        from uuid import UUID
+
+        await reject_run(deps.rw, UUID(state["run_id"]), dict(state))
+        return {"event": {"kind": "rejected"}}
+
     g = StateGraph(AgentState)
     g.add_node("act", act)
     g.add_node("tools", run_tools)
     g.add_node("diagnose", diagnose)
     g.add_node("draft", draft)
     g.add_node("approval", approval)
+    g.add_node("write", write)
+    g.add_node("reject", reject)
     g.add_edge(START, "act")
     g.add_conditional_edges("act", after_act, ["tools", "diagnose"])
     g.add_edge("tools", "act")
     g.add_edge("diagnose", "draft")
     g.add_edge("draft", "approval")
-    g.add_edge("approval", END)  # #12 adds the write node after the decision
+    g.add_conditional_edges("approval", after_approval, ["write", "reject"])
+    g.add_edge("write", END)
+    g.add_edge("reject", END)
     return g.compile(checkpointer=checkpointer)

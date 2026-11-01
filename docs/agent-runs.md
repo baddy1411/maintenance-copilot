@@ -49,7 +49,7 @@ The API never executes a run. Every fact about a run is in Postgres, so any API 
 
 ## 3. The graph
 
-`act ⇄ tools → diagnose → draft → approval (interrupt) → END`. The write node arrives with #12.
+`act ⇄ tools → diagnose → draft → approval (interrupt) → write | reject → END`. The nodes after the interrupt are described in [`approvals.md`](approvals.md) (#12, graph v2, which still serves v1 runs).
 
 ### 3.1 No separate `plan` node
 AGENT.md sketched a `plan` LLM step before `act`. In practice the first `act` turn plans: the live run's first turn called `get_aircraft` and a search together. A separate plan call would add one LLM round trip (about 2 s) and a cost, without information `act` doesn't already have. Logged as DESIGN P2-28.
@@ -144,7 +144,7 @@ This slice: **$0.0187** (ledger): two live runs. Everything else ran against the
 
 | Item | Where |
 | --- | --- |
-| Decision endpoint, approvals row with compare-and-set, write node, `expire_approvals` | #12 |
+| ~~Decision endpoint, approvals row with compare-and-set, write node, `expire_approvals`~~ **done**: see [`approvals.md`](approvals.md) | #12 |
 | `query_sdr` tool | #6 then #11 |
 | Safety notes mention ADs for *other* types (correctly flagged as not shown to apply, but noise); safety notes aren't citation-checked | Phase 3 (prompt + eval) |
 | Supervisors' access to runs; JWT; per-user concurrent-run limit (2) | #13 |

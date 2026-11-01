@@ -53,6 +53,24 @@ async def _embed_missing(args: argparse.Namespace) -> None:
     print(report)
 
 
+async def _check_deploy(expire: bool) -> int:
+    from psycopg_pool import AsyncConnectionPool
+
+    from app.agent.graph import SERVED_GRAPH_VERSIONS
+    from app.agent.runner import expire_unserved, unserved_runs
+
+    s = Settings()
+    async with AsyncConnectionPool(s.dsn("app_rw"), min_size=1, max_size=2, open=False) as pool:
+        runs = await unserved_runs(pool)
+        print(f"this release serves graph versions {sorted(SERVED_GRAPH_VERSIONS)}; unserved live runs: {len(runs)}")
+        for run_id, status, version in runs:
+            print(f"  {run_id}  {status}  graph v{version}")
+        if runs and expire:
+            print(f"expired {len(await expire_unserved(pool))} run(s), each with an audit entry")
+            return 0
+    return 1 if runs else 0
+
+
 async def _worker() -> None:
     from app.jobs import RUNTIME, make_app
     from app.resources import agent_resources
@@ -75,6 +93,8 @@ def main(argv: list[str] | None = None) -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("migrate", help="apply all database migrations (run before any service update)")
     sub.add_parser("seed", help="load the synthetic fleet (idempotent)")
+    chk = sub.add_parser("check-deploy", help="pre-deploy check: live runs on graph versions this release can't resume")
+    chk.add_argument("--expire", action="store_true", help="expire them (with an audit entry) instead of failing")
 
     ads = sub.add_parser("ingest-ads", help="sync Airworthiness Directives from the Federal Register")
     ads.add_argument("--since", type=date.fromisoformat, help="publication date to start from (backfill)")
@@ -110,6 +130,8 @@ def main(argv: list[str] | None = None) -> None:
         from app.seed import seed_fleet
 
         print(f"fleet rows: {seed_fleet(Settings())}")
+    elif args.command == "check-deploy":
+        raise SystemExit(asyncio.run(_check_deploy(args.expire)))
     elif args.command == "ingest-ads":
         asyncio.run(_ingest_ads(args))
     elif args.command == "ingest-handbooks":

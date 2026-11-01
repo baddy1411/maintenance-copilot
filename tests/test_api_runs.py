@@ -11,6 +11,7 @@ import psycopg
 import pytest
 from pydantic import SecretStr
 
+from app.agent.graph import GRAPH_VERSION
 from app.agent.runner import execute_run
 from app.api.main import create_app
 from app.config import Settings
@@ -74,7 +75,7 @@ async def test_create_queues_a_job_and_a_first_event(api: Api, db: Settings) -> 
     assert r.json() == {"run_id": run_id, "status": "queued", "events_url": f"/runs/{run_id}/events"}
     assert jobs(db) == [("run_agent", "agent", run_id, "todo")]
     got = (await api.http.get(f"/runs/{run_id}", headers={"X-Dev-User": "tech-1"})).json()
-    assert got["status"] == "queued" and got["graph_version"] == "1" and got["state_schema_version"] == 1
+    assert got["status"] == "queued" and got["graph_version"] == GRAPH_VERSION and got["state_schema_version"] == 1
 
 
 async def test_retry_with_the_same_key_returns_the_same_run(api: Api, db: Settings) -> None:
@@ -132,3 +133,25 @@ async def test_event_stream_replays_and_resumes_from_last_event_id(api: Api) -> 
     assert [k for _, k, _ in tail] == ["diagnosis", "draft", "status", "end"]
     draft = (await api.http.get(f"/runs/{run_id}", headers={"X-Dev-User": "tech-1"})).json()["draft"]
     assert draft["registration"] == "MX-001"
+
+
+async def test_stream_waits_for_the_final_event_not_just_the_status_column(api: Api, db: Settings) -> None:
+    """Regression (found live in #12): the write node commits runs.status = 'written' a moment before the
+    runner records the final events. A stream that ended on the status column cut them off."""
+    import asyncio
+
+    run_id = (await api.post(BODY)).json()["run_id"]
+    with psycopg.connect(db.dsn("migrator"), autocommit=True) as conn:
+        conn.execute("UPDATE runs SET status = 'written' WHERE run_id = %s", (run_id,))
+
+    async def finish_late() -> None:
+        await asyncio.sleep(0.8)
+        with psycopg.connect(db.dsn("migrator"), autocommit=True) as conn:
+            for seq, kind, payload in [(2, "written", {"work_order_id": "w-1"}), (3, "status", {"status": "written"})]:
+                conn.execute("INSERT INTO run_events (run_id, seq, kind, payload) VALUES (%s, %s, %s, %s)",
+                             (run_id, seq, kind, json.dumps(payload)))  # fmt: skip
+
+    late = asyncio.create_task(finish_late())
+    got = await api.stream(run_id)
+    await late
+    assert [k for _, k, _ in got] == ["status", "written", "status", "end"]

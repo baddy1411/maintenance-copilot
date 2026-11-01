@@ -56,4 +56,4 @@ async def agent_resources(settings: Settings, gateway: Gateway | None = None) ->
     ):
         gw = gateway or Gateway(settings, http, PostgresLedger(rw))
         tools = Tools(Retriever(ro, gw, RetrievalConfig()), ro)
-        yield RunDeps(settings, rw, cp, AgentDeps(settings, gw, tools))
+        yield RunDeps(settings, rw, cp, AgentDeps(settings, gw, tools, rw))

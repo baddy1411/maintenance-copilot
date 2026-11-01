@@ -43,8 +43,9 @@ The two structural changes from the reviews: agent runs execute as worker jobs i
 | Hybrid retrieval | #8 | Done; **0.97 recall@5 / 0.87 MRR on Postgres** (spike 0.97 / 0.87) | `tests/test_retrieval.py`, [retrieval.md](retrieval.md) |
 | Cited Q&A over SSE | #9 | Done; live: first event 9 ms, first token 1.98 s, checked citations, about $0.003 per question | `tests/test_api_ask.py`, [qa.md](qa.md) |
 | Agent runs as worker jobs | #10 | Done up to the approval pause; live: pickup 22 ms, symptom → draft 30 s, $0.009; **SIGKILL resume verified** | `tests/test_agent*.py`, `tests/test_api_runs.py`, [agent-runs.md](agent-runs.md) |
+| Approvals and the work-order write | #12 | Done; **approval invariant property-tested (13 combinations + forged resume)**; live: one approved and written, one rejected, audit chain verified | `tests/test_approval*.py`, `tests/test_audit.py`, [approvals.md](approvals.md) |
 
-How each slice was built, step by step: [BUILD_LOG.md](BUILD_LOG.md). The ingestion design in detail: [ingestion.md](ingestion.md). Retrieval in detail: [retrieval.md](retrieval.md). Q&A in detail: [qa.md](qa.md). Agent runs in detail: [agent-runs.md](agent-runs.md).
+How each slice was built, step by step: [BUILD_LOG.md](BUILD_LOG.md). The ingestion design in detail: [ingestion.md](ingestion.md). Retrieval in detail: [retrieval.md](retrieval.md). Q&A in detail: [qa.md](qa.md). Agent runs in detail: [agent-runs.md](agent-runs.md). Approvals in detail: [approvals.md](approvals.md).
 
 **Local corpus (2026-10-29):** 2,549 documents, **53,133 chunks, all embedded**, 327 MB. ADs are broken down below; the handbooks and AC add 2,875 pages and 8,935 chunks.
 
@@ -66,4 +67,5 @@ AD backfill:
 | Retrieval evaluation (#8) | $0.20 (cap $0.50) |
 | Cited Q&A (#9): TTFT runs, diagnostics, threshold probes, PDF re-embed, eval re-run | $0.2031 (ledger) |
 | Agent runs (#10): two live runs | $0.0187 (ledger) |
+| Approvals (#12): live decisions make no model calls | $0.00 |
 | **Total** | **≈ $4.54** |
