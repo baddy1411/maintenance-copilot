@@ -138,7 +138,7 @@ Command: `uv run python s3_interrupt.py`, result **7/7 checks passed**:
 | A freshly compiled graph (simulating another API worker) sees the pending interrupt | PASS |
 | … and can resume it and write | PASS |
 
-The write is a **graph node, not an LLM tool**, so the model cannot skip approval. Phase 2 must swap `InMemorySaver` for a durable Postgres checkpointer. The cross-worker check here shares one in-memory saver, so **resume across a real process restart is UNVERIFIED**.
+The write is a **graph node, not an LLM tool**, so the model cannot skip approval. Phase 2 must swap `InMemorySaver` for a durable Postgres checkpointer. The cross-worker check here shares one in-memory saver, so **resume across a real process restart is UNVERIFIED**. **Update 2026-11-01: verified in Phase 2** (#10, `tests/test_agent_kill.py`). A worker process SIGKILLed mid-run; a second process resumed from the Postgres checkpoint at the interrupted step.
 
 ## 4. Data pipeline findings VERIFIED
 

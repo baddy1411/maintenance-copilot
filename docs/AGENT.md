@@ -2,6 +2,8 @@
 
 Status: **DRAFT (Phase 0)**. This is a sketch to challenge in Phase 1 `DESIGN.md`, not a final design. The spike implements a cut-down version in `spikes/`.
 
+> **Implemented in Phase 2 (#10):** see [`agent-runs.md`](agent-runs.md). Differences from this sketch: no separate `plan` node, since the first `act` turn plans; `search_documents` has no make/model filters yet; `query_sdr` waits for the SDR data (#6); citations are `chunk_id` plus a checked quote; graph state is plain JSON. The write node after approval is #12.
+
 ## Graph
 
 ```mermaid

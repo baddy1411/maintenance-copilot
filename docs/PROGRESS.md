@@ -42,8 +42,9 @@ The two structural changes from the reviews: agent runs execute as worker jobs i
 | Handbooks, AC, sandboxed uploads | #7 | Done; **all 4 PDFs loaded locally** | `tests/test_pdf.py`, `tests/test_ingest_pdfs.py` |
 | Hybrid retrieval | #8 | Done; **0.97 recall@5 / 0.87 MRR on Postgres** (spike 0.97 / 0.87) | `tests/test_retrieval.py`, [retrieval.md](retrieval.md) |
 | Cited Q&A over SSE | #9 | Done; live: first event 9 ms, first token 1.98 s, checked citations, about $0.003 per question | `tests/test_api_ask.py`, [qa.md](qa.md) |
+| Agent runs as worker jobs | #10 | Done up to the approval pause; live: pickup 22 ms, symptom → draft 30 s, $0.009; **SIGKILL resume verified** | `tests/test_agent*.py`, `tests/test_api_runs.py`, [agent-runs.md](agent-runs.md) |
 
-How each slice was built, step by step: [BUILD_LOG.md](BUILD_LOG.md). The ingestion design in detail: [ingestion.md](ingestion.md). Retrieval in detail: [retrieval.md](retrieval.md). Q&A in detail: [qa.md](qa.md).
+How each slice was built, step by step: [BUILD_LOG.md](BUILD_LOG.md). The ingestion design in detail: [ingestion.md](ingestion.md). Retrieval in detail: [retrieval.md](retrieval.md). Q&A in detail: [qa.md](qa.md). Agent runs in detail: [agent-runs.md](agent-runs.md).
 
 **Local corpus (2026-10-29):** 2,549 documents, **53,133 chunks, all embedded**, 327 MB. ADs are broken down below; the handbooks and AC add 2,875 pages and 8,935 chunks.
 
@@ -64,4 +65,5 @@ AD backfill:
 | Handbooks and AC embedding | $0.0454 (estimate $0.052, cap $0.10) |
 | Retrieval evaluation (#8) | $0.20 (cap $0.50) |
 | Cited Q&A (#9): TTFT runs, diagnostics, threshold probes, PDF re-embed, eval re-run | $0.2031 (ledger) |
-| **Total** | **≈ $4.52** |
+| Agent runs (#10): two live runs | $0.0187 (ledger) |
+| **Total** | **≈ $4.54** |

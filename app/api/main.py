@@ -1,5 +1,7 @@
 """The HTTP API (DESIGN §4): FastAPI, async end to end. `copilot api` runs it under uvicorn.
 
+Routes: POST /ask (cited Q&A), and the agent-run routes in app/api/runs.py.
+
 POST /ask streams Server-Sent Events (app/qa/service.py lists them). FastAPI's SSE support sends a
 `: ping` comment after 15 s without an event, which is the heartbeat DESIGN §7.5 asks for, so there's no
 separate timer. On a client disconnect the request is cancelled, and the gateway closes the upstream model
@@ -17,7 +19,9 @@ from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel, Field
 
 from app.api.auth import Principal, check_dev_auth_allowed, dev_principal
+from app.api.runs import router as runs_router
 from app.config import Settings
+from app.jobs import make_app
 from app.llm import Gateway, PostgresLedger
 from app.qa.service import answer_events
 from app.retrieval.search import RetrievalConfig, Retriever
@@ -40,12 +44,16 @@ def create_app(settings: Settings | None = None, gateway: Gateway | None = None)
             httpx2.AsyncClient() as http,
         ):
             gw = gateway or Gateway(s, http, PostgresLedger(rw))
-            app.state.settings = s
-            app.state.gateway = gw
-            app.state.retriever = Retriever(ro, gw, RetrievalConfig())
-            yield
+            jobs = make_app(s, role="app_rw")  # the API only defers jobs; the worker runs them
+            async with jobs.open_async():
+                app.state.settings = s
+                app.state.gateway = gw
+                app.state.retriever = Retriever(ro, gw, RetrievalConfig())
+                app.state.ro, app.state.rw, app.state.jobs = ro, rw, jobs
+                yield
 
     app = FastAPI(title="Maintenance Copilot", version="0.1.0", lifespan=lifespan)
+    app.include_router(runs_router)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

@@ -54,11 +54,18 @@ async def _embed_missing(args: argparse.Namespace) -> None:
 
 
 async def _worker() -> None:
-    from app.jobs import make_app
+    from app.jobs import RUNTIME, make_app
+    from app.resources import agent_resources
 
-    app = make_app(Settings())
-    async with app.open_async():
-        await app.run_worker_async()
+    s = Settings()
+    app = make_app(s)
+    async with agent_resources(s) as deps, app.open_async():
+        RUNTIME["agent"] = deps
+        # On SIGTERM procrastinate stops taking jobs and waits up to the grace period for running ones
+        # (below ECS's 120 s stopTimeout). A run aborted after that resumes from its checkpoint via the reaper.
+        await app.run_worker_async(
+            concurrency=s.worker_concurrency, shutdown_graceful_timeout=s.worker_shutdown_grace_s
+        )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -67,6 +74,7 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="copilot")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("migrate", help="apply all database migrations (run before any service update)")
+    sub.add_parser("seed", help="load the synthetic fleet (idempotent)")
 
     ads = sub.add_parser("ingest-ads", help="sync Airworthiness Directives from the Federal Register")
     ads.add_argument("--since", type=date.fromisoformat, help="publication date to start from (backfill)")
@@ -98,6 +106,10 @@ def main(argv: list[str] | None = None) -> None:
         from app.migrate import migrate
 
         print(f"database at revision {migrate(Settings())}")
+    elif args.command == "seed":
+        from app.seed import seed_fleet
+
+        print(f"fleet rows: {seed_fleet(Settings())}")
     elif args.command == "ingest-ads":
         asyncio.run(_ingest_ads(args))
     elif args.command == "ingest-handbooks":

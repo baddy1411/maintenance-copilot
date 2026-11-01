@@ -61,12 +61,30 @@ class StreamEnd:
 
 
 @dataclass(frozen=True)
+class ToolCall:
+    id: str
+    name: str
+    arguments: str  # JSON text as the model produced it; the caller validates it
+
+
+@dataclass(frozen=True)
 class ChatResult:
     text: str
     finish_reason: str | None
     model: str
     provider: str | None
     cost: float
+    tool_calls: tuple[ToolCall, ...] = ()
+
+    def assistant_message(self) -> dict[str, Any]:
+        """This reply as a message to append to the conversation, including its tool calls."""
+        msg: dict[str, Any] = {"role": "assistant", "content": self.text or None}
+        if self.tool_calls:
+            msg["tool_calls"] = [
+                {"id": t.id, "type": "function", "function": {"name": t.name, "arguments": t.arguments}}
+                for t in self.tool_calls
+            ]
+        return msg
 
 
 def _redact_messages(messages: Sequence[Message]) -> list[Message]:
@@ -162,7 +180,9 @@ class Gateway:
             cached_tokens=(u.get("prompt_tokens_details") or {}).get("cached_tokens"),
         )  # fmt: skip
         choice = r.choices[0]
-        return ChatResult(choice.message.content or "", choice.finish_reason, model, provider, cost)
+        calls = tuple(ToolCall(c.id, c.function.name, c.function.arguments or "{}")
+                      for c in (choice.message.tool_calls or []) if getattr(c, "function", None))  # fmt: skip
+        return ChatResult(choice.message.content or "", choice.finish_reason, model, provider, cost, calls)
 
     async def chat(
         self, ctx: CallContext, messages: Sequence[Message], *, max_tokens: int, model: str | None = None,

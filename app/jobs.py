@@ -1,25 +1,84 @@
-"""Background jobs on the Postgres queue (ADR-0001). The worker process runs these."""
+"""Background jobs on the Postgres queue (ADR-0001). The worker process runs these; the API only defers them.
+
+Queues:
+  default  ingestion (sync_ads every 6 h)
+  agent    agent runs (ADR-0004); reap_runs every 5 min re-enqueues runs whose worker died
+"""
+
+import logging
+from uuid import UUID
 
 import procrastinate
+from procrastinate.exceptions import AlreadyEnqueued
 
-from app.config import Settings
+from app.agent.runner import RunDeps, emit, execute_run, fail, stale_runs
+from app.config import Role, Settings
 from app.ingest.ads import sync_ads
 from app.resources import ingest_resources
 
+logger = logging.getLogger(__name__)
 
-def make_app(settings: Settings) -> procrastinate.App:
-    app = procrastinate.App(connector=procrastinate.PsycopgConnector(conninfo=settings.dsn("ingest_rw")))
+# Opened once per worker process by `copilot worker` (app/cli.py), not per job.
+RUNTIME: dict[str, RunDeps] = {}
+
+
+def runtime() -> RunDeps:
+    try:
+        return RUNTIME["agent"]
+    except KeyError:
+        raise RuntimeError("agent runtime not initialised: run jobs with `copilot worker`") from None
+
+
+async def enqueue_run(app: procrastinate.App, run_id: UUID) -> bool:
+    """Defer the job for one run. The queueing lock stops a second copy being queued, and the lock stops
+    two copies running at once (e.g. the reaper re-enqueues while a slow job is still running).
+    Returns False if one was already queued."""
+    key = f"run:{run_id}"
+    try:
+        await app.configure_task("run_agent", queue="agent", lock=key, queueing_lock=key).defer_async(
+            run_id=str(run_id)
+        )
+    except AlreadyEnqueued:
+        return False
+    return True
+
+
+async def reap(app: procrastinate.App, deps: RunDeps) -> dict[str, int]:
+    out = {"requeued": 0, "failed": 0, "already_queued": 0}
+    for run_id, attempts in await stale_runs(deps.rw_pool, deps.settings.run_stale_after_s):
+        if attempts >= deps.settings.run_max_attempts:
+            await fail(deps, run_id, f"no progress after {attempts} attempts (worker died or job lost)")
+            out["failed"] += 1
+        elif await enqueue_run(app, run_id):
+            await emit(deps.rw_pool, run_id, "status", {"status": "requeued", "after_attempts": attempts})
+            out["requeued"] += 1
+        else:
+            out["already_queued"] += 1
+    return out
+
+
+def make_app(settings: Settings, role: Role = "ingest_rw") -> procrastinate.App:
+    """`role`: the worker connects as ingest_rw; the API (which only defers) as app_rw."""
+    app = procrastinate.App(connector=procrastinate.PsycopgConnector(conninfo=settings.dsn(role)))
 
     # Every 6 h (DESIGN §6.2). The FR posts each day's issue in the US morning, and the 3-day overlap
     # re-reads anything that arrived late. `queueing_lock` stops runs piling up if one is slow.
     @app.periodic(cron="15 */6 * * *", periodic_id="sync_ads")
-    @app.task(
-        name="sync_ads",
-        queueing_lock="sync_ads",
-        retry=procrastinate.RetryStrategy(max_attempts=3, exponential_wait=60),
-    )
+    @app.task(name="sync_ads", queueing_lock="sync_ads",
+              retry=procrastinate.RetryStrategy(max_attempts=3, exponential_wait=60))  # fmt: skip
     async def sync_ads_task(timestamp: int) -> None:
         async with ingest_resources(settings) as r:
             await sync_ads(settings, r.fetcher, r.pool, r.gateway)
+
+    # No procrastinate retry: the run's own checkpoint and the reaper handle failures (ADR-0004).
+    @app.task(name="run_agent", queue="agent")
+    async def run_agent_task(run_id: str) -> None:
+        status = await execute_run(UUID(run_id), runtime())
+        logger.info("run %s -> %s", run_id, status)
+
+    @app.periodic(cron="*/5 * * * *", periodic_id="reap_runs")
+    @app.task(name="reap_runs", queue="agent", queueing_lock="reap_runs")
+    async def reap_runs_task(timestamp: int) -> None:
+        logger.info("reap_runs: %s", await reap(app, runtime()))
 
     return app

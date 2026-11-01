@@ -82,6 +82,16 @@ class Settings(BaseSettings):
     # off-domain 0.26-0.42, one in-domain unanswerable 0.765 (not caught). Provisional until Phase 3.
     relevance_threshold: float = 0.5
 
+    # Agent runs (DESIGN §6.3, docs/agent-runs.md).
+    agent_max_steps: int = 8  # act -> tools cycles
+    agent_max_tokens: int = 2000  # act turns; reasoning tokens count against this (SPIKE §1)
+    agent_structured_max_tokens: int = 3000  # diagnose and draft
+    agent_reasoning_effort: str = "low"
+    worker_concurrency: int = 4
+    worker_shutdown_grace_s: float = 100.0  # below ECS stopTimeout 120 s (ADR-0004)
+    run_stale_after_s: int = 300  # reap_runs: no heartbeat for this long means the worker died
+    run_max_attempts: int = 3  # the first attempt plus 2 re-enqueues (DESIGN §6.3)
+
     def config_version(self) -> str:
         """Hash of the effective runtime config, stamped on ledger rows and traces (DESIGN §7.4).
         Secrets and connection details are excluded: they don't change behaviour."""

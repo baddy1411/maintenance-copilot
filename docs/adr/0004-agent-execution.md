@@ -1,6 +1,6 @@
 # ADR-0004: Agent as a library, with runs executed as worker jobs
 
-Status: Proposed · 2026-10-29 · **revised in DESIGN v2** after the cost and scale and operations reviews (findings C9 and O3)
+Status: **Accepted** · 2026-11-01, implemented in #10 · **revised in DESIGN v2** after the cost and scale and operations reviews (findings C9 and O3)
 
 ## Context
 `PLAN.md` lists a separate "LangGraph agent service". A run streams its steps to the user, takes about 35–45 s, pauses for supervisor approval (which can take hours or days), and then resumes. v1 ran the graph inside the API request handler that held the SSE stream. The reviews found three problems with that:
@@ -19,10 +19,17 @@ Status: Proposed · 2026-10-29 · **revised in DESIGN v2** after the cost and sc
 ## Decision
 - The graph lives in `app/agent`. **`POST /runs` inserts a `runs` row and enqueues a job.** The worker executes the graph with **`langgraph-checkpoint-postgres` 3.2.0**, writes progress to `run_events` and updates `runs.heartbeat_at` at every step. The API streams `run_events` over SSE.
 - At the interrupt, the run stops with `status = pending_approval`. The decision endpoint records the approval (DESIGN §6.3) and enqueues a resume job.
-- **Workers drain on SIGTERM.** They finish the current step and stop, with ECS `stopTimeout` = 120 s. `reap_runs` re-enqueues runs that have had no heartbeat for 5 minutes, at most twice.
+- **Workers drain on SIGTERM.** They stop taking jobs and let running ones finish, for up to 100 s (procrastinate's `shutdown_graceful_timeout`, below ECS `stopTimeout` = 120 s). *Revised in #10 (DESIGN P2-29): v2 said "finish the current step"; with per-step checkpoints, the library's drain plus the reaper loses at most one step.* `reap_runs` re-enqueues runs that have had no heartbeat for 5 minutes, at most twice.
 - Q&A stays in the API request, because it is short and has nothing to resume.
 
 ## Consequences
 - Job-pickup latency adds to agent latency. The Phase 2 measurement must show p95 pickup ≤ 1 s, or else poll the queue more often.
 - Cross-process resume is now the normal path rather than an edge case, so the Phase 2 two-process kill-and-resume test is mandatory (`SPIKE.md` §3 marks it UNVERIFIED).
 - Breaking graph changes need run versioning (DESIGN §6.3.1).
+
+## Implementation results (issue #10, `docs/agent-runs.md`)
+- Job pickup through procrastinate's LISTEN/NOTIFY: **22 ms and 16 ms** (target p95 ≤ 1 s).
+- Live runs: symptom → draft in **30.2 s and 27 s** (target p95 ≤ 45 s), **$0.009** each.
+- **Cross-process resume verified:** a worker SIGKILLed mid-run; a second process resumed at the interrupted step without redoing completed ones (`tests/test_agent_kill.py`). With `durability="exit"` instead of `"sync"` the test fails.
+- **SIGTERM drain verified live:** the worker finished the in-flight run, then stopped. We rely on procrastinate's `shutdown_graceful_timeout` (100 s) rather than a custom step-level drain.
+- The reaper re-queues runs with a stale heartbeat (at most twice), with `lock` and `queueing_lock` = `run:{id}`, so only one job per run can be queued or executing.

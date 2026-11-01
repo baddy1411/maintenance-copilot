@@ -47,6 +47,20 @@ def completion(content: str, finish_reason: str = "stop", cost: float = 0.0004, 
     })  # fmt: skip
 
 
+def tool_call_completion(
+    calls: list[tuple[str, dict[str, Any]]], text: str = "", cost: float = 0.0003
+) -> httpx2.Response:
+    """A completion whose message asks for tool calls (OpenAI format, as OpenRouter returns it)."""
+    tool_calls = [{"id": f"call_{i}", "type": "function", "function": {"name": n, "arguments": json.dumps(a)}}
+                  for i, (n, a) in enumerate(calls)]  # fmt: skip
+    return httpx2.Response(200, json={
+        "id": "gen-t", "object": "chat.completion", "created": 0, "model": HAIKU, "provider": "Anthropic",
+        "choices": [{"index": 0, "finish_reason": "tool_calls",
+                     "message": {"role": "assistant", "content": text or None, "tool_calls": tool_calls}}],
+        "usage": {"prompt_tokens": 900, "completion_tokens": 40, "total_tokens": 940, "cost": cost},
+    })  # fmt: skip
+
+
 def sse_completion(deltas: list[str], *, finish_reason: str = "stop", cost: float = 0.0006, model: str = HAIKU,
                    provider: str = "Anthropic") -> httpx2.Response:  # fmt: skip
     """A streamed completion in OpenRouter's wire format: processing comments, one chunk per delta, a final

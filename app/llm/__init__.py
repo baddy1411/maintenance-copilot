@@ -6,7 +6,7 @@ from app.llm.errors import (
     StructuredOutputError,
     UnsupportedModel,
 )
-from app.llm.gateway import ChatResult, EmbedResult, Gateway, StreamEnd
+from app.llm.gateway import ChatResult, EmbedResult, Gateway, StreamEnd, ToolCall
 from app.llm.ledger import CallContext, PostgresLedger
 
 __all__ = [
@@ -21,5 +21,6 @@ __all__ = [
     "SpendLimitExceeded",
     "StreamEnd",
     "StructuredOutputError",
+    "ToolCall",
     "UnsupportedModel",
 ]

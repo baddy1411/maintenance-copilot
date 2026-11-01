@@ -239,3 +239,57 @@ Full write-up: `docs/retrieval.md`.
 - About $0.003 per question.
 
 Full write-up: `docs/qa.md`.
+
+## Phase 2 · Slice 7: agent runs as worker jobs (#10)
+2026-11-01 · spend $0.019 (ledger)
+
+**Goal:** a technician's symptom becomes a durable run, executed by the worker, streamed to any client, re-attachable, and recoverable if the worker dies, up to the supervisor-approval pause. The decision and the write are #12.
+
+**Steps**
+1. **Checked the libraries first.**
+   - `AsyncPostgresSaver` takes a pool, and needs autocommit, dict rows and `prepare_threshold=0`.
+   - The serializer's `pickle_fallback` is False by default, and newer LangGraph restricts which types it deserializes. That decided **plain-JSON graph state** (P2-27).
+   - `astream` takes `durability` ("sync" checkpoints every step).
+   - procrastinate's worker has `shutdown_graceful_timeout`, which decided the SIGTERM approach (P2-29).
+2. **Gateway tool calling:** `ChatResult.tool_calls`, plus `assistant_message()` to continue the conversation.
+3. **Data:**
+   - Migration 0008, a `tools_work_orders` view for `get_aircraft`.
+   - `copilot seed` with 12 fictional MX-### aircraft on real types.
+4. **Agent** (`app/agent/`):
+   - Schemas and two tools on the read-only role, with output capped at about 2k tokens.
+   - Three prompts in `app/prompts/`, hashed into `prompt_version`.
+   - The graph `act ⇄ tools → diagnose → draft → approval`, with no separate plan node (P2-28).
+   - Context compaction.
+   - Code-side checks: citations against retrieved passages, the registration correction (P2-30), the AD priority floor, and a canonical draft hash.
+5. **Runner:**
+   - Claim by compare-and-set; resume from the checkpoint.
+   - A `run_event` and heartbeat per step; `pending_approval` at the interrupt.
+   - Known failures fail the run; anything else is left to the reaper.
+6. **Jobs:**
+   - `run_agent` on its own queue, with a per-run lock and queueing lock.
+   - `reap_runs` every 5 min.
+   - Worker resources opened once per process.
+7. **API** (`app/api/runs.py`):
+   - Create with per-user idempotency and 409 on a reused key; 404 for an unknown aircraft before any spend.
+   - Status and draft.
+   - Event stream with `Last-Event-ID` re-attach.
+8. **Tests:**
+   - 13 agent tests (units, full run, priority floor, registration, fabricated citations, step cap, unknown aircraft, 402, idempotent execution, in-process crash resume, reaper);
+   - 9 API tests;
+   - **the two-process SIGKILL test**.
+
+**What went wrong and was fixed**
+- **I overwrote `docs/AGENT.md`.** macOS's filesystem is case-insensitive, so writing `docs/agent.md` replaced the Phase 0 sketch. Restored from git, and the new document is `docs/agent-runs.md`. Lesson: check for case collisions before creating a doc.
+- **The ownership check for the event stream ran inside the SSE generator.** The 200 is already sent there, so a 404 for another user's run turned into a server error. Moved into a dependency (P2-32).
+- **The reaper test had a wrong expectation:** the "requeued" event refreshes the heartbeat, so a second pass finds nothing stale. That's correct behaviour (P2-31), so the test now checks the queueing lock directly.
+- **I mutation-checked the SIGKILL test:** with `durability="exit"`, the resumed process starts from scratch and the test fails. With `"sync"` it resumes at the interrupted turn.
+
+**Live**
+- **Run 1 (737-800, metal in oil):** pickup **22 ms**, symptom → draft **30.2 s**, **$0.0093**. Two tool calls in the first turn, a CFM56-7B AD search, an urgent draft citing Powerplant Handbook p. 8-2.
+- **Run 2 (ATR 72, spongy brake):** the worker got **SIGTERM** after the first step, finished the run (27 s, one attempt), then stopped. **The drain works.**
+
+**Quality notes for Phase 3:**
+- Safety notes mention ADs for other aircraft types. They're flagged as not shown to apply, but it's noise, and safety notes aren't citation-checked.
+- Diagnose and draft together take about 18 s.
+
+Full write-up: `docs/agent-runs.md`.
