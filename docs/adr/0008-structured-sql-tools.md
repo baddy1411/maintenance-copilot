@@ -1,6 +1,6 @@
 # ADR-0008: Structured query tools instead of free-form SQL
 
-Status: Proposed · 2026-10-29
+Status: Accepted · 2026-10-29 · implemented 2026-11-01 in #6 (`docs/sdr.md`). Limits as built: 10 rows by default, 20 at most, 60 for monthly counts (DESIGN P2-48)
 
 ## Context
 `PLAN.md` calls for "read-only SQL" in the agent. The main SQL workload is SDR questions: filtering by make, model, JASC code, part and date, and aggregates such as "most common JASC codes on CRJ-900 this year".

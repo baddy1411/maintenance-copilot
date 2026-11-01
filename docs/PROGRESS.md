@@ -45,8 +45,9 @@ The two structural changes from the reviews: agent runs execute as worker jobs i
 | Agent runs as worker jobs | #10 | Done up to the approval pause; live: pickup 22 ms, symptom → draft 30 s, $0.009; **SIGKILL resume verified** | `tests/test_agent*.py`, `tests/test_api_runs.py`, [agent-runs.md](agent-runs.md) |
 | Approvals and the work-order write | #12 | Done; **approval invariant property-tested (13 combinations + forged resume)**; live: one approved and written, one rejected, audit chain verified | `tests/test_approval*.py`, `tests/test_audit.py`, [approvals.md](approvals.md) |
 | Auth, access and limits | #13 | Done; JWT (ES256) with startup guards, roles → document access, rate and concurrency limits, security headers, CORS; **every route classified by a test** | `tests/test_auth.py`, [auth.md](auth.md), [ADR-0010](adr/0010-authentication.md) |
+| SDR ingestion and `query_sdr` | #6, #11 (SQL tool part) | Done; **183,592 live SDRs (2024–2026) loaded in 19 s**, re-sync 100 % unchanged; 95.4 % mapped to a model family; tool queries 4–60 ms; agent use of the tool live UNVERIFIED | `tests/test_ingest_sdr.py`, `tests/test_sdr_models.py`, `tests/test_tools_contract.py`, [sdr.md](sdr.md) |
 
-How each slice was built, step by step: [BUILD_LOG.md](BUILD_LOG.md). The ingestion design in detail: [ingestion.md](ingestion.md). Retrieval in detail: [retrieval.md](retrieval.md). Q&A in detail: [qa.md](qa.md). Agent runs in detail: [agent-runs.md](agent-runs.md). Approvals in detail: [approvals.md](approvals.md). Auth in detail: [auth.md](auth.md).
+How each slice was built, step by step: [BUILD_LOG.md](BUILD_LOG.md). The ingestion design in detail: [ingestion.md](ingestion.md). Retrieval in detail: [retrieval.md](retrieval.md). Q&A in detail: [qa.md](qa.md). Agent runs in detail: [agent-runs.md](agent-runs.md). Approvals in detail: [approvals.md](approvals.md). Auth in detail: [auth.md](auth.md). SDRs in detail: [sdr.md](sdr.md).
 
 **Local corpus (2026-10-29):** 2,549 documents, **53,133 chunks, all embedded**, 327 MB. ADs are broken down below; the handbooks and AC add 2,875 pages and 8,935 chunks.
 
@@ -70,4 +71,5 @@ AD backfill:
 | Agent runs (#10): two live runs | $0.0187 (ledger) |
 | Approvals (#12): live decisions make no model calls | $0.00 |
 | Auth and limits (#13): no model calls | $0.00 |
+| SDR ingestion (#6): FAA CSV downloads, no model calls | $0.00 |
 | **Total** | **≈ $4.54** |

@@ -16,6 +16,7 @@ class SyncReport:
     updated: int = 0
     unchanged: int = 0
     quarantined: int = 0
+    tombstoned: int = 0  # SDRs withdrawn from the FAA files
     failed: int = 0
     cost: float = 0.0
     stopped_early: str | None = None

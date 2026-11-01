@@ -22,6 +22,16 @@ async def _ingest_ads(args: argparse.Namespace) -> None:
     print(report)
 
 
+async def _ingest_sdr(args: argparse.Namespace) -> None:
+    from app.ingest.sdr import sync_sdr
+    from app.resources import ingest_resources
+
+    s = Settings()
+    async with ingest_resources(s, embed=False) as r:
+        report = await sync_sdr(s, r.fetcher, r.pool, years=args.years)
+    print(report)
+
+
 async def _ingest_handbooks(args: argparse.Namespace) -> None:
     from app.ingest.pdf_docs import ingest_official
     from app.resources import ingest_resources
@@ -107,6 +117,9 @@ def main(argv: list[str] | None = None) -> None:
     ads.add_argument("--limit", type=int, help="stop after this many FR documents")
     ads.add_argument("--no-embed", action="store_true", help="store chunks without vectors (no model spend)")
 
+    sdr = sub.add_parser("ingest-sdr", help="sync FAA Service Difficulty Reports (no model spend)")
+    sdr.add_argument("--years", type=int, nargs="+", help="years to sync (default: this year and the 2 before)")
+
     hb = sub.add_parser("ingest-handbooks", help="fetch and ingest the FAA handbooks and AC 43.13-1B")
     hb.add_argument("--only", nargs="+", help="doc_ids to (re)ingest, e.g. faa-ac-43-13-1b")
     hb.add_argument("--no-embed", action="store_true", help="store chunks without vectors (no model spend)")
@@ -154,6 +167,8 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(asyncio.run(_check_deploy(args.expire)))
     elif args.command == "ingest-ads":
         asyncio.run(_ingest_ads(args))
+    elif args.command == "ingest-sdr":
+        asyncio.run(_ingest_sdr(args))
     elif args.command == "ingest-handbooks":
         asyncio.run(_ingest_handbooks(args))
     elif args.command == "ingest-pdf":

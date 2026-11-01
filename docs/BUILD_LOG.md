@@ -356,3 +356,73 @@ Full write-up: `docs/approvals.md`.
 **Live**, with dev tokens: no token / garbage → 401; technician on supervisor routes → 403; supervisor → 200; an unknown aircraft → 404 before any work; supervisor on `/audit/verify` → 403; admin → 200 with the 4-row chain intact. Security headers on every response.
 
 Full write-up: `docs/auth.md`, ADR-0010.
+
+## Phase 2 · Slice 10: SDR ingestion and the `query_sdr` tool (#6, #11)
+2026-11-01 · spend $0.00 (FAA downloads only, no model calls)
+
+**Goal:** the FAA's Service Difficulty Reports (183k live reports for 2024–2026) loaded safely and kept in sync, with aircraft names normalised, and a structured, read-only tool the agent uses to ask "is this a known problem on this type?".
+
+**Steps**
+1. **Studied the three real files first.** Findings:
+   - 76 columns, not the 80 in DATA.md (corrected there);
+   - identical headers every year;
+   - `OperatorControlNumber` is unique across years;
+   - dates in two formats;
+   - about 130 rows with control characters and about 430 multi-line narratives;
+   - 74 make codes and 767 make/model pairs.
+2. **Normaliser (`app/ingest/sdr_models.py`), measured on every report (`scripts/measure_sdr_models.py`).** The first version mapped 94.7 % of reports. Listing the largest unmapped and the per-make model lists led to these additions:
+   - 777 Freighter;
+   - A300B4-600R;
+   - ATR;
+   - a fix for `DC983`, which had become "DC-98";
+   - a make table rebuilt from the codes actually present. The first version had guessed codes such as `ROBIN` that don't occur, and missed `ROBSIN`, `AMD` (Dassault) and `SWRNGN`.
+
+   Result: **95.4 %** of reports get a family. The trap worth recording: a bare `7378` is the **737-8 MAX**. It isn't a 737-800, which always carries a customer code.
+3. **Migration 0009:**
+   - adds `model_family`, operator, part condition and location, nature codes, submission date and `source_year`, plus indexes;
+   - widens `tools_sdr`;
+   - adds `ingest_runs.tombstoned`.
+
+   Registration and serial numbers are deliberately not stored.
+4. **`app/ingest/sdr.py`:**
+   - a pinned-header parser with empty-column and bad-row limits;
+   - a **truncation guard**: refuse a file with < 90 % of the year's stored reports;
+   - per year, one transaction under an advisory lock: COPY into a temporary table, upsert by row hash, tombstone what disappeared from **that year only**, record aliases.
+
+   Plus the weekly `sync_sdr` job (Sunday 04:45 UTC) and `copilot ingest-sdr`.
+5. **`query_sdr`** (ADR-0008, now Accepted):
+   - four modes and six filters;
+   - fixed SQL fragments with bound values only, as `tools_ro`, with a 5 s timeout;
+   - output capped;
+   - `list` rows citable as `sdr:<id>`;
+   - every count carries "not failure rates".
+
+   The act prompt explains the tool, and the diagnose prompt says SDRs show a pattern, not a procedure. `PROMPT_VERSION` changes by itself; `GRAPH_VERSION` doesn't, because no node changed.
+6. **Tool contract (#11)** in `tests/test_tools_contract.py`:
+   - `tools.py` can't name another role or open connections;
+   - the worker's tools and retriever really connect as `tools_ro` in read-only mode;
+   - every tool spec is strict and closed;
+   - bad calls go back to the model.
+7. **Tests: 84 new** (356 total):
+   - 48 normaliser cases;
+   - 29 sync and tool tests on Postgres with a fake FAA server;
+   - 7 contract tests.
+
+**Found and fixed**
+- **The DC-9 and make-code mistakes above.** Both were found by measuring on real data instead of trusting the first rules.
+- **`tools_ro` is stricter than my test assumed.** Its sessions default to read-only transactions, so a DELETE fails with `ReadOnlySqlTransaction` before any privilege check. The test now accepts either layer and documents both.
+
+**Mutation checks**, all confirmed to fail a test:
+- no truncation guard;
+- tombstoning across all years;
+- no `%`/`_` escaping in the part filter;
+- the worker wiring tools with the `app_rw` pool.
+
+**Live** (local):
+- **183,592 reports loaded in 19 s**, 0 dropped, 0 quarantined. The 2026 file had grown by 682 reports since the 28 Oct download.
+- The immediate re-sync left all 183,592 unchanged.
+- Tool queries take 4–60 ms. For example, CRJ900 landing-gear reports by part: selector valve 19, sensor 19, warning message 11.
+
+**UNVERIFIED:** how well the live agent picks `query_sdr` arguments. That needs a paid run; it's the first thing to check on the next live agent run.
+
+Full write-up: `docs/sdr.md`, DESIGN P2-45…P2-49.

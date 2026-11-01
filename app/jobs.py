@@ -1,7 +1,7 @@
 """Background jobs on the Postgres queue (ADR-0001). The worker process runs these; the API only defers them.
 
 Queues:
-  default  ingestion (sync_ads every 6 h)
+  default  ingestion (sync_ads every 6 h, sync_sdr weekly)
   agent    agent runs (ADR-0004); reap_runs every 5 min re-enqueues runs whose worker died;
            expire_approvals daily at 03:30 UTC
 """
@@ -15,6 +15,7 @@ from procrastinate.exceptions import AlreadyEnqueued
 from app.agent.runner import RunDeps, emit, execute_run, expire_approvals, fail, stale_runs
 from app.config import Role, Settings
 from app.ingest.ads import sync_ads
+from app.ingest.sdr import sync_sdr
 from app.resources import ingest_resources
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,15 @@ def make_app(settings: Settings, role: Role = "ingest_rw") -> procrastinate.App:
     async def sync_ads_task(timestamp: int) -> None:
         async with ingest_resources(settings) as r:
             await sync_ads(settings, r.fetcher, r.pool, r.gateway)
+
+    # Weekly, Sunday 04:45 UTC (docs/sdr.md): the FAA files are regenerated daily, but SDRs feed pattern
+    # questions where a week's lag doesn't matter, and each sync downloads ~90 MB.
+    @app.periodic(cron="45 4 * * 0", periodic_id="sync_sdr")
+    @app.task(name="sync_sdr", queueing_lock="sync_sdr",
+              retry=procrastinate.RetryStrategy(max_attempts=3, exponential_wait=300))  # fmt: skip
+    async def sync_sdr_task(timestamp: int) -> None:
+        async with ingest_resources(settings, embed=False) as r:
+            await sync_sdr(settings, r.fetcher, r.pool)
 
     # No procrastinate retry: the run's own checkpoint and the reaper handle failures (ADR-0004).
     @app.task(name="run_agent", queue="agent")

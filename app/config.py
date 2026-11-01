@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     # an object store on AWS (Phase 8).
     upload_dir: Path = Path("data/uploads")
     pdf_max_bytes: int = 300_000_000
+    # Service Difficulty Reports (docs/sdr.md): one CSV per year, ~34 MB for a full year.
+    sdr_url: str = "https://external.apic4e.faa.gov/sdrs/retrieve/SDR-{year}.csv"
+    sdr_years_back: int = 2  # each weekly sync re-reads the current year and the 2 before it
+    sdr_max_bytes: int = 150_000_000
+    sdr_min_kept: float = 0.9  # refuse a file with fewer than 90% of the reports already stored for its year
     pdf_max_pages: int = 3_000
     pdf_cpu_s: int = 300
     pdf_mem_mb: int = 2_048
