@@ -18,6 +18,7 @@ from app.config import Settings
 from app.llm import Gateway
 from app.resources import agent_resources
 from tests.agent_fixtures import seed
+from tests.auth_helpers import bearer, with_auth
 from tests.fake_openrouter import FakeOpenRouter, MemoryLedger
 from tests.test_agent import script
 
@@ -32,11 +33,11 @@ class Api:
     fake: FakeOpenRouter
 
     async def post(self, body: dict[str, Any], key: str | None = "k-1", user: str = "tech-1") -> httpx2.Response:
-        headers = {"X-Dev-User": user} | ({"Idempotency-Key": key} if key else {})
+        headers = bearer(user) | ({"Idempotency-Key": key} if key else {})
         return await self.http.post("/runs", json=body, headers=headers)
 
     async def stream(self, run_id: str, user: str = "tech-1", **headers: str) -> list[tuple[str | None, str, Any]]:
-        r = await self.http.get(f"/runs/{run_id}/events", headers={"X-Dev-User": user, **headers})
+        r = await self.http.get(f"/runs/{run_id}/events", headers={**bearer(user), **headers})
         assert r.status_code == 200, r.text
         out = []
         for block in r.text.split("\n\n"):
@@ -51,8 +52,7 @@ async def api(db: Settings) -> AsyncIterator[Api]:
     seed(db)
     with psycopg.connect(db.dsn("migrator"), autocommit=True) as conn:
         conn.execute("TRUNCATE procrastinate_jobs CASCADE")
-    s = db.model_copy(update={"openrouter_api_key": SecretStr("sk-test"), "user_hash_salt": SecretStr("s"),
-                              "llm_max_retries": 0})  # fmt: skip
+    s = with_auth(db, openrouter_api_key=SecretStr("sk-test"), llm_max_retries=0)
     fake = FakeOpenRouter(embed_dim=1024)
     async with fake.client() as llm_http:
         app = create_app(s, Gateway(s, llm_http, MemoryLedger()))
@@ -74,7 +74,7 @@ async def test_create_queues_a_job_and_a_first_event(api: Api, db: Settings) -> 
     run_id = r.json()["run_id"]
     assert r.json() == {"run_id": run_id, "status": "queued", "events_url": f"/runs/{run_id}/events"}
     assert jobs(db) == [("run_agent", "agent", run_id, "todo")]
-    got = (await api.http.get(f"/runs/{run_id}", headers={"X-Dev-User": "tech-1"})).json()
+    got = (await api.http.get(f"/runs/{run_id}", headers=bearer("tech-1"))).json()
     assert got["status"] == "queued" and got["graph_version"] == GRAPH_VERSION and got["state_schema_version"] == 1
 
 
@@ -109,8 +109,8 @@ async def test_bad_requests_are_rejected_before_anything_is_spent(
 
 async def test_another_users_run_is_not_found(api: Api) -> None:
     run_id = (await api.post(BODY, user="tech-1")).json()["run_id"]
-    assert (await api.http.get(f"/runs/{run_id}", headers={"X-Dev-User": "tech-2"})).status_code == 404
-    assert (await api.http.get(f"/runs/{run_id}/events", headers={"X-Dev-User": "tech-2"})).status_code == 404
+    assert (await api.http.get(f"/runs/{run_id}", headers=bearer("tech-2"))).status_code == 404
+    assert (await api.http.get(f"/runs/{run_id}/events", headers=bearer("tech-2"))).status_code == 404
 
 
 async def test_event_stream_replays_and_resumes_from_last_event_id(api: Api) -> None:
@@ -131,7 +131,7 @@ async def test_event_stream_replays_and_resumes_from_last_event_id(api: Api) -> 
 
     tail = await api.stream(run_id, **{"Last-Event-ID": "7"})
     assert [k for _, k, _ in tail] == ["diagnosis", "draft", "status", "end"]
-    draft = (await api.http.get(f"/runs/{run_id}", headers={"X-Dev-User": "tech-1"})).json()["draft"]
+    draft = (await api.http.get(f"/runs/{run_id}", headers=bearer("tech-1"))).json()["draft"]
     assert draft["registration"] == "MX-001"
 
 

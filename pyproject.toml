@@ -17,6 +17,8 @@ dependencies = [
     "procrastinate==3.10.0",
     "psycopg[binary,pool]==3.3.6",
     "pydantic==2.14.1",
+    "pyjwt[crypto]==2.15.1",
+    "cryptography==50.0.2",
     "pypdfium2==5.14.0",
     "pydantic-settings==2.16.2",
     "sqlalchemy==2.1.6",

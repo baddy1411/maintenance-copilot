@@ -436,7 +436,8 @@ The target is relaxed only after all four have been tried, and the change is log
 | [0006](adr/0006-observability.md) | OTel; Langfuse and Grafana locally, CloudWatch and X-Ray on AWS | Proposed (revised v2) |
 | [0007](adr/0007-eval-tooling.md) | Light pytest harness, with library metrics only where they're calibrated | Proposed, finalised in Phase 3 |
 | [0008](adr/0008-structured-sql-tools.md) | Structured filter tools instead of free-form SQL | Proposed |
-| [0009](adr/0009-no-redis.md) | No Redis; limits and caches in Postgres | Proposed (new in v2) |
+| [0009](adr/0009-no-redis.md) | No Redis; limits and caches in Postgres | Proposed (new in v2); limits implemented in #13 |
+| [0010](adr/0010-authentication.md) | Bearer JWTs (ES256) against a public key; local-only dev issuer | Accepted (#13) |
 
 ## Review log
 
@@ -542,4 +543,10 @@ Logged as they're made, each with its reason.
 | P2-36 | 2026-11-02 | Audit appends take a **transaction-level advisory lock**, and hash timestamps **in UTC** | Without the lock, concurrent appends forked the chain in 5 of 5 runs. Without UTC, a session in another time zone fails verification. Both tested |
 | P2-37 | 2026-11-02 | Run event streams end on the **last event being a final status event**, not on `runs.status` | Found live: the write node commits the status a moment before the runner records its final events, so streams ended without the work-order id. Regression-tested |
 | P2-38 | 2026-11-02 | The dev principal takes a role from `X-Dev-Role` (still only when ENV is local or test) | Needed to test supervisor-only decisions before JWT (#13). The approver identity still comes from the principal, never the request body |
+| P2-39 | 2026-11-02 | Authentication is **bearer JWTs (ES256) against a public key**; the local dev issuer signs with a git-ignored key, and the old `X-Dev-*` headers are gone (ADR-0010) | One verification path for local, CI and production, so tests exercise the real thing. Startup refuses a dev key, the dev issuer, no public key, `none`/HMAC algorithms, or a short salt outside local/test |
+| P2-40 | 2026-11-02 | Role → document access: technician `public`; supervisor and admin `public` + `restricted` (`role_access`, configurable) | §5.1 made uploads `restricted` by default without saying who may read them. This gives one configurable answer until per-document grants (Phase 5) |
+| P2-41 | 2026-11-02 | Idempotent `POST /runs` retries are answered **before** any rate limit is taken | A client retrying after a timeout must not use up the user's daily runs |
+| P2-42 | 2026-11-02 | The in-progress-runs limit is enforced under a per-user advisory lock; runs `pending_approval` don't count | Two simultaneous requests could otherwise both pass. A run waiting on a supervisor doesn't use the worker |
+| P2-43 | 2026-11-02 | `Cache-Control: no-store` **overrides** the SSE default `no-cache`; API docs and the OpenAPI schema are local-only | API responses carry answers, drafts and audit data; the schema maps every route |
+| P2-44 | 2026-11-02 | A test classifies **every route** (walking FastAPI's wrapped sub-routers plus OpenAPI paths) and fails on an unclassified one | Makes "every endpoint has an access decision" a build failure rather than a review item. Checked with an unauthenticated `/debug` route |
 

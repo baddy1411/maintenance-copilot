@@ -93,6 +93,11 @@ def main(argv: list[str] | None = None) -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("migrate", help="apply all database migrations (run before any service update)")
     sub.add_parser("seed", help="load the synthetic fleet (idempotent)")
+    sub.add_parser("dev-keys", help="local only: create the dev token signing key (DEV_JWT_KEY_FILE)")
+    tok = sub.add_parser("dev-token", help="local only: print a token from the dev issuer")
+    tok.add_argument("--user", required=True)
+    tok.add_argument("--role", choices=["technician", "supervisor", "admin"], default="technician")
+    tok.add_argument("--hours", type=float, default=8.0)
     chk = sub.add_parser("check-deploy", help="pre-deploy check: live runs on graph versions this release can't resume")
     chk.add_argument("--expire", action="store_true", help="expire them (with an audit entry) instead of failing")
 
@@ -130,6 +135,21 @@ def main(argv: list[str] | None = None) -> None:
         from app.seed import seed_fleet
 
         print(f"fleet rows: {seed_fleet(Settings())}")
+    elif args.command == "dev-keys":
+        from app.api.auth import generate_dev_key
+
+        s = Settings()
+        if s.dev_jwt_key_file is None:
+            raise SystemExit("set DEV_JWT_KEY_FILE first (make env does)")
+        if s.dev_jwt_key_file.exists():
+            print(f"{s.dev_jwt_key_file} already exists; leaving it")
+        else:
+            generate_dev_key(s.dev_jwt_key_file)
+            print(f"wrote {s.dev_jwt_key_file} (EC P-256, mode 600)")
+    elif args.command == "dev-token":
+        from app.api.auth import mint_dev_token
+
+        print(mint_dev_token(Settings(), args.user, args.role, int(args.hours * 3600)))
     elif args.command == "check-deploy":
         raise SystemExit(asyncio.run(_check_deploy(args.expire)))
     elif args.command == "ingest-ads":

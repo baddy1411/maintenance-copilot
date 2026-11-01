@@ -12,12 +12,12 @@ import pytest
 from fastapi import FastAPI
 from pydantic import SecretStr
 
-from app.api.auth import DevAuthNotAllowed
 from app.api.main import create_app
 from app.config import Settings
 from app.ingest.store import halfvec
 from app.llm import Gateway
 from app.qa.answer import DELIMITER
+from tests.auth_helpers import bearer, with_auth
 from tests.fake_openrouter import VOYAGE, FakeOpenRouter, MemoryLedger, error, sse_completion
 
 pytestmark = pytest.mark.integration
@@ -43,7 +43,7 @@ class Client:
     ledger: MemoryLedger
 
     async def ask(self, question: str, user: str = "tech-7") -> list[tuple[str, Any]]:
-        r = await self.http.post("/ask", json={"question": question}, headers={"X-Dev-User": user})
+        r = await self.http.post("/ask", json={"question": question}, headers=bearer(user))
         assert r.status_code == 200, r.text
         assert r.headers["content-type"].startswith("text/event-stream")
         events = []
@@ -74,8 +74,7 @@ def seeded(db: Settings) -> Iterator[None]:
 
 @pytest.fixture
 async def client(db: Settings, seeded: None) -> AsyncIterator[Client]:
-    s = db.model_copy(update={"openrouter_api_key": SecretStr("sk-test"), "user_hash_salt": SecretStr("s"),
-                              "embed_model": VOYAGE, "llm_max_retries": 0})  # fmt: skip
+    s = with_auth(db, openrouter_api_key=SecretStr("sk-test"), embed_model=VOYAGE, llm_max_retries=0)
     fake, ledger = FakeOpenRouter(embed_dim=1024), MemoryLedger()
     async with fake.client() as llm_http:
         app: FastAPI = create_app(s, Gateway(s, llm_http, ledger))
@@ -145,7 +144,7 @@ async def test_model_down_returns_the_passages(client: Client) -> None:
 
 @pytest.mark.parametrize("question", ["", "hi", "x" * 2001])
 async def test_question_length_is_validated(client: Client, question: str) -> None:
-    r = await client.http.post("/ask", json={"question": question})
+    r = await client.http.post("/ask", json={"question": question}, headers=bearer())
     assert r.status_code == 422
 
 
@@ -155,8 +154,3 @@ async def test_spend_is_recorded_per_user(client: Client) -> None:
     kinds = {r.ctx.kind for r in client.ledger.records}
     assert {"retrieval", "answer"} <= kinds
     assert all(r.user_hash and "tech-42" not in r.user_hash for r in client.ledger.records)
-
-
-def test_dev_auth_is_refused_outside_local(db: Settings) -> None:
-    with pytest.raises(DevAuthNotAllowed):
-        create_app(db.model_copy(update={"env": "prod"}))

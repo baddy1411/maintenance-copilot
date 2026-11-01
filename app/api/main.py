@@ -14,12 +14,16 @@ from typing import Annotated
 
 import httpx2
 from fastapi import Depends, FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel, Field
 
-from app.api.auth import Principal, check_dev_auth_allowed, dev_principal
+from app.api.admin import router as admin_router
+from app.api.auth import DEV_ENVS, Principal, check_auth_config, current_principal
+from app.api.limits import limit_subject, take
 from app.api.runs import router as runs_router
+from app.api.security import SecurityHeaders
 from app.config import Settings
 from app.jobs import make_app
 from app.llm import Gateway, PostgresLedger
@@ -34,7 +38,7 @@ class AskRequest(BaseModel):
 def create_app(settings: Settings | None = None, gateway: Gateway | None = None) -> FastAPI:
     """`gateway` can be injected (tests). Otherwise it's built from settings in the lifespan."""
     s = settings or Settings()
-    check_dev_auth_allowed(s)
+    jwt_key = check_auth_config(s)  # fail at startup, not on the first request
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -47,13 +51,31 @@ def create_app(settings: Settings | None = None, gateway: Gateway | None = None)
             jobs = make_app(s, role="app_rw")  # the API only defers jobs; the worker runs them
             async with jobs.open_async():
                 app.state.settings = s
+                app.state.jwt_key = jwt_key
                 app.state.gateway = gw
                 app.state.retriever = Retriever(ro, gw, RetrievalConfig())
                 app.state.ro, app.state.rw, app.state.jobs = ro, rw, jobs
                 yield
 
-    app = FastAPI(title="Maintenance Copilot", version="0.1.0", lifespan=lifespan)
+    dev = s.env in DEV_ENVS
+    # Interactive docs and the OpenAPI schema only locally: the schema maps every route for an attacker.
+    app = FastAPI(
+        title="Maintenance Copilot", version="0.1.0", lifespan=lifespan,
+        docs_url="/docs" if dev else None, redoc_url=None, openapi_url="/openapi.json" if dev else None,
+    )  # fmt: skip
     app.include_router(runs_router)
+    app.include_router(admin_router)
+    # Outermost first: CORS answers preflights, then every response gets the security headers.
+    app.add_middleware(SecurityHeaders, hsts=not dev)
+    app.add_middleware(CORSMiddleware, allow_origins=s.cors_origins, allow_methods=["GET", "POST"],
+                       allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "Last-Event-ID"],
+                       allow_credentials=False, max_age=600)  # fmt: skip
+
+    async def qa_allowance(request: Request, principal: Annotated[Principal, Depends(current_principal)]) -> Principal:
+        """As a dependency, so the 429 is sent before the SSE response starts."""
+        async with request.app.state.rw.connection() as conn:
+            await take(conn, limit_subject(s, principal.user_id), "qa", "hour", s.qa_per_hour)
+        return principal
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
@@ -61,7 +83,7 @@ def create_app(settings: Settings | None = None, gateway: Gateway | None = None)
 
     @app.post("/ask", response_class=EventSourceResponse)
     async def ask(
-        body: AskRequest, request: Request, principal: Annotated[Principal, Depends(dev_principal)]
+        body: AskRequest, request: Request, principal: Annotated[Principal, Depends(qa_allowance)]
     ) -> AsyncIterator[ServerSentEvent]:
         st = request.app.state
         events = answer_events(body.question, principal.user_id, principal.access_levels, st.settings, st.retriever,

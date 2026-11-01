@@ -329,3 +329,30 @@ Full write-up: `docs/agent-runs.md`.
 **Live:** the two real v1 runs from #10, decided under v2 by `sup-anna`. MX-001 approved → work order written (created by `badrish-demo`, approved by `sup-anna`). MX-007 rejected with a reason → no work order. A second approval of MX-001 → 409. The 4-entry audit chain verified intact.
 
 Full write-up: `docs/approvals.md`.
+
+## Phase 2 · Slice 9: auth, access and limits (#13)
+2026-11-02 · spend $0.00
+
+**Goal:** every call carries a verified identity and role; roles decide what each person can see and do; per-user limits stop abuse before any work starts; the HTTP layer is hardened.
+
+**Steps**
+1. **Chose the approach (ADR-0010):** bearer JWTs, ES256, against a public key, with PyJWT 2.15.1 and cryptography 50.0.2, both released at the end of September. Sessions, API keys and OIDC-now were the alternatives. A local dev issuer (`copilot dev-keys`, `copilot dev-token`) means local, CI and production share one verification path. The `X-Dev-*` headers from #9–#12 were removed.
+2. **`app/api/auth.py`:** verification with an algorithm allow-list and required claims; role → access levels; `supervisor` and `admin` dependencies; **startup guards** for production (dev key, dev issuer, no public key, none/HMAC, short salt).
+3. **Found while wiring `make env`:** the user-hash salt had been **empty** by default, so ledger user ids were plain hashes. `make env` now generates one, and production refuses a short one.
+4. **`app/api/limits.py`:** Q&A per hour and runs per day as atomic upserts, plus in-progress runs under a per-user advisory lock. Idempotent retries are answered before any limit is taken. The Q&A limit is a dependency, so its 429 isn't trapped inside an SSE response.
+5. **`app/api/security.py`:** security headers as a pure ASGI middleware, so streams aren't buffered. CORS allow-list. Docs local-only. `GET /audit/runs/{id}` (supervisors) and `GET /audit/verify` (admins).
+6. **Tests:**
+   - all 37 existing API tests moved to real signed tokens;
+   - **32 new tests:** route classification, 401 on every protected route, role refusals, 13 bad-token cases (including `alg: none` and HS256 signed with the public key), 7 startup-guard cases, docs off in production, Q&A, daily and in-progress limits (including the race), role-based document access, audit reads, headers on JSON and SSE, CORS.
+
+**Found and fixed**
+- **FastAPI 0.162 wraps included routers** (`_IncludedRouter`). A naive walk of `app.routes` would have skipped every route in `runs.py` and `admin.py`, which is the exact gap the classification test exists to catch. It now walks into the wrappers and adds the OpenAPI paths.
+- **SSE sets `Cache-Control: no-cache`, and my middleware deferred to it.** Now `no-store` wins (P2-43).
+
+**Mutation checks**, both confirmed:
+- an unauthenticated `/debug` route fails the classification test, which names it;
+- removing the audience check fails exactly the "wrong audience" case.
+
+**Live**, with dev tokens: no token / garbage → 401; technician on supervisor routes → 403; supervisor → 200; an unknown aircraft → 404 before any work; supervisor on `/audit/verify` → 403; admin → 200 with the 4-row chain intact. Security headers on every response.
+
+Full write-up: `docs/auth.md`, ADR-0010.

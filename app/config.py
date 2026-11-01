@@ -82,6 +82,25 @@ class Settings(BaseSettings):
     # off-domain 0.26-0.42, one in-domain unanswerable 0.765 (not caught). Provisional until Phase 3.
     relevance_threshold: float = 0.5
 
+    # Authentication (DESIGN §7.3, docs/auth.md). Tokens are JWTs: `sub` = user id, `role` = one of role_access.
+    jwt_issuer: str = "maintenance-copilot-dev"
+    jwt_audience: str = "maintenance-copilot"
+    jwt_algorithms: list[str] = ["ES256"]  # an allow-list: "none" and HMAC tokens are refused
+    jwt_leeway_s: int = 30
+    jwt_public_key: str | None = None  # PEM; literal "\n" sequences allowed (env vars). Required outside local/test
+    dev_jwt_key_file: Path | None = None  # local/test only: signs `copilot dev-token`; startup fails elsewhere
+    role_access: dict[str, list[str]] = {
+        "technician": ["public"],
+        "supervisor": ["public", "restricted"],
+        "admin": ["public", "restricted"],
+    }
+    cors_origins: list[str] = []  # browser origins allowed to call the API; none by default
+
+    # Rate limits per user (DESIGN §2), counted in Postgres (ADR-0009). Spend caps are in the gateway.
+    qa_per_hour: int = 60
+    runs_per_day: int = 20
+    runs_concurrent: int = 2
+
     # Agent runs (DESIGN §6.3, docs/agent-runs.md).
     agent_max_steps: int = 8  # act -> tools cycles
     agent_max_tokens: int = 2000  # act turns; reasoning tokens count against this (SPIKE §1)

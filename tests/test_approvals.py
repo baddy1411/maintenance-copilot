@@ -23,11 +23,12 @@ from app.config import Settings
 from app.llm import Gateway
 from app.resources import agent_resources
 from tests.agent_fixtures import clear_approval_tables, create_run, events, run_row, seed
+from tests.auth_helpers import bearer, with_auth
 from tests.fake_openrouter import FakeOpenRouter, MemoryLedger
 from tests.test_agent import script
 
 pytestmark = pytest.mark.integration
-SUP = {"X-Dev-User": "sup-1", "X-Dev-Role": "supervisor"}
+SUP = bearer("sup-1", "supervisor")
 
 
 @dataclass
@@ -59,8 +60,7 @@ class Env:
 async def env(db: Settings) -> AsyncIterator[Env]:
     seed(db)
     clear_approval_tables(db)
-    s = db.model_copy(update={"openrouter_api_key": SecretStr("sk-test"), "user_hash_salt": SecretStr("s"),
-                              "llm_max_retries": 0})  # fmt: skip
+    s = with_auth(db, openrouter_api_key=SecretStr("sk-test"), llm_max_retries=0)
     fake = FakeOpenRouter(embed_dim=1024)
     async with fake.client() as llm_http:
         gw = Gateway(s, llm_http, MemoryLedger())
@@ -76,7 +76,7 @@ async def env(db: Settings) -> AsyncIterator[Env]:
 
 async def test_technicians_cannot_decide_or_see_the_queue(env: Env) -> None:
     run_id, sha = await env.paused_run()
-    tech = {"X-Dev-User": "tech-2", "X-Dev-Role": "technician"}
+    tech = bearer("tech-2", "technician")
     assert (await env.decide(run_id, {"action": "approve", "draft_sha256": sha}, tech)).status_code == 403
     assert (await env.http.get("/approvals", headers=tech)).status_code == 403
 
@@ -115,7 +115,7 @@ async def test_only_one_decision_per_run(env: Env) -> None:
     run_id, sha = await env.paused_run()
     assert (await env.decide(run_id, {"action": "approve", "draft_sha256": sha})).status_code == 202
     r = await env.decide(run_id, {"action": "reject", "draft_sha256": sha, "reason": "late"},
-                         {"X-Dev-User": "sup-2", "X-Dev-Role": "supervisor"})  # fmt: skip
+                         bearer("sup-2", "supervisor"))  # fmt: skip
     assert r.status_code == 409 and "is decided" in r.json()["detail"]
 
 
@@ -124,7 +124,7 @@ async def test_concurrent_approve_and_reject_one_wins(env: Env) -> None:
     a, b = await asyncio.gather(
         env.decide(run_id, {"action": "approve", "draft_sha256": sha}),
         env.decide(run_id, {"action": "reject", "draft_sha256": sha, "reason": "no"},
-                   {"X-Dev-User": "sup-2", "X-Dev-Role": "supervisor"}),
+                   bearer("sup-2", "supervisor")),
     )  # fmt: skip
     assert sorted([a.status_code, b.status_code]) == [202, 409]
     assert len(env.q("SELECT * FROM approvals")) == 1

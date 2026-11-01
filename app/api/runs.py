@@ -23,10 +23,13 @@ from pydantic import BaseModel, Field, model_validator
 from app import audit
 from app.agent.graph import GRAPH_VERSION, PROMPT_VERSION, SERVED_GRAPH_VERSIONS, STATE_SCHEMA_VERSION
 from app.agent.schemas import REGISTRATION, WorkOrderDraft
-from app.api.auth import Principal, can_decide, dev_principal
+from app.api.auth import Principal, can_decide, current_principal, supervisor
+from app.api.limits import check_concurrent_runs, limit_subject, take
 from app.jobs import enqueue_run
 
 router = APIRouter()
+
+
 STREAM_POLL_S = 0.3
 STREAM_MAX_S = 600.0  # after this the stream ends; the client re-attaches with Last-Event-ID
 FINAL_EVENT_GRACE_S = 5.0  # a finished run with no final status event still ends the stream after this
@@ -44,7 +47,7 @@ def request_hash(body: RunRequest) -> str:
 
 @router.post("/runs", status_code=202)
 async def create_run(
-    body: RunRequest, request: Request, response: Response, principal: Annotated[Principal, Depends(dev_principal)],
+    body: RunRequest, request: Request, response: Response, principal: Annotated[Principal, Depends(current_principal)],
     idempotency_key: Annotated[str | None, Header(max_length=128)] = None,
 ) -> dict[str, Any]:  # fmt: skip
     st = request.app.state
@@ -54,6 +57,19 @@ async def create_run(
             raise HTTPException(404, f"{body.registration} is not in the fleet")
     key, sha = idempotency_key or f"auto:{uuid4()}", request_hash(body)
     async with st.rw.connection() as conn:
+        # A retry of an earlier request returns that run and doesn't count against any limit.
+        cur = await conn.execute(
+            "SELECT run_id, request_sha256, status FROM runs WHERE created_by = %s AND client_key = %s",
+            (principal.user_id, key),
+        )
+        existing = await cur.fetchone()
+        if existing is not None:
+            if existing[1] != sha:
+                raise HTTPException(409, "Idempotency-Key was already used for a different request")
+            response.status_code = 200
+            return {"run_id": str(existing[0]), "status": existing[2], "events_url": f"/runs/{existing[0]}/events"}
+        await check_concurrent_runs(conn, principal.user_id, st.settings.runs_concurrent)
+        await take(conn, limit_subject(st.settings, principal.user_id), "runs", "day", st.settings.runs_per_day)
         cur = await conn.execute(
             "INSERT INTO runs (created_by, registration, symptom, client_key, request_sha256, graph_version, "
             "prompt_version, config_version, state_schema_version) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
@@ -62,17 +78,8 @@ async def create_run(
              st.settings.config_version(), STATE_SCHEMA_VERSION),
         )  # fmt: skip
         row = await cur.fetchone()
-        if row is None:  # a retry of an earlier request with the same key
-            cur = await conn.execute(
-                "SELECT run_id, request_sha256, status FROM runs WHERE created_by = %s AND client_key = %s",
-                (principal.user_id, key),
-            )
-            existing = await cur.fetchone()
-            assert existing is not None
-            if existing[1] != sha:
-                raise HTTPException(409, "Idempotency-Key was already used for a different request")
-            response.status_code = 200
-            return {"run_id": str(existing[0]), "status": existing[2], "events_url": f"/runs/{existing[0]}/events"}
+        if row is None:  # lost a race with an identical retry: a 409 is the honest answer
+            raise HTTPException(409, "a request with this Idempotency-Key is already being created")
         run_id = UUID(str(row[0]))
         await conn.execute("INSERT INTO run_events (run_id, seq, kind, payload) VALUES (%s, 1, 'status', %s)",
                            (run_id, json.dumps({"status": "queued"})))  # fmt: skip
@@ -99,7 +106,7 @@ async def own_run(request: Request, run_id: UUID, principal: Principal) -> tuple
 
 @router.get("/runs/{run_id}")
 async def get_run(
-    run_id: UUID, request: Request, principal: Annotated[Principal, Depends(dev_principal)]
+    run_id: UUID, request: Request, principal: Annotated[Principal, Depends(current_principal)]
 ) -> dict[str, Any]:
     r = await own_run(request, run_id, principal)
     keys = ("run_id", "registration", "symptom", "status", "graph_version", "prompt_version", "config_version",
@@ -115,7 +122,9 @@ async def get_run(
     return out
 
 
-async def owned_run_id(run_id: UUID, request: Request, principal: Annotated[Principal, Depends(dev_principal)]) -> UUID:
+async def owned_run_id(
+    run_id: UUID, request: Request, principal: Annotated[Principal, Depends(current_principal)]
+) -> UUID:
     """As a dependency, the 404 is raised before a streaming response starts. Inside the SSE generator the
     status line is already sent, so it couldn't be."""
     await own_run(request, run_id, principal)
@@ -206,13 +215,11 @@ def checked_edit(edit: WorkOrderDraft, original: dict[str, Any], registration: s
 
 @router.post("/runs/{run_id}/decision", status_code=202)
 async def decide(
-    run_id: UUID, body: DecisionRequest, request: Request, principal: Annotated[Principal, Depends(dev_principal)]
+    run_id: UUID, body: DecisionRequest, request: Request, principal: Annotated[Principal, Depends(supervisor)]
 ) -> dict[str, Any]:
     """The only way a paused run continues (DESIGN §6.3). The approver is the authenticated principal: there
     is no approver field in the body. One transaction: lock the run, check, compare-and-set to 'decided',
     insert the approvals row, append the audit entry, record the event. Then enqueue the resume job."""
-    if not can_decide(principal):
-        raise HTTPException(403, "only supervisors can decide on runs")
     st = request.app.state
     async with st.rw.connection() as conn, conn.transaction():
         cur = await conn.execute(
@@ -273,12 +280,10 @@ async def decide(
 
 @router.get("/approvals")
 async def approval_queue(
-    request: Request, principal: Annotated[Principal, Depends(dev_principal)]
+    request: Request, principal: Annotated[Principal, Depends(supervisor)]
 ) -> list[dict[str, Any]]:
     """Runs waiting for a decision, oldest first. Supervisors and admins only. Each item carries the draft
     and the draft_sha256 the decision must quote."""
-    if not can_decide(principal):
-        raise HTTPException(403, "only supervisors can see the approval queue")
     async with request.app.state.rw.connection() as conn:
         cur = await conn.execute(
             "SELECT r.run_id, r.registration, r.symptom, r.created_by, r.created_at, r.draft_sha256, r.graph_version, "
