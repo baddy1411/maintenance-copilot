@@ -7,16 +7,16 @@ requires-python = ">=3.13,<3.14"
 license = "MIT"
 dependencies = [
     "alembic==1.20.1",
-    "anyio==4.15.1",
+    "anyio==4.16.0",
     "fastapi==0.162.0",
     "httpx2==2.16.0",  # what openai 3.x uses; one HTTP stack for the SDK, rerank and catalog
-    "langgraph==1.2.18",
+    "langgraph==1.2.19",
     "langgraph-checkpoint-postgres==3.2.0",
-    "openai==3.41.0",
+    "openai==3.42.1",
     "pgvector==0.5.1",
     "procrastinate==3.10.0",
     "psycopg[binary,pool]==3.3.6",
-    "pydantic==2.14.1",
+    "pydantic==2.14.2",
     "pyjwt[crypto]==2.15.1",
     "cryptography==50.0.2",
     "pypdfium2==5.14.0",
@@ -34,7 +34,7 @@ dev = [
     "pip-audit",
     "pre-commit==4.7.0",
     "pytest==9.2.0",
-    "pytest-asyncio==1.4.1",
+    "pytest-asyncio==1.4.1.post1",
     "ruff==0.17.3",
     "testcontainers[postgres]==4.15.0",
 ]
